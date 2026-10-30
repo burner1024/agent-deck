@@ -731,7 +731,7 @@ func (c *ConfirmDialog) View() string {
 	case ConfirmDeleteRemoteGroup:
 		title = "⚠  Delete Remote Group?"
 		warning = fmt.Sprintf("This will delete the group on the remote:\n\n  \"%s\" on %s", c.targetID, c.remoteName)
-		details = "• Only an empty group is deleted\n• A group that still holds sessions is refused by the\n  remote; move them out first (M)"
+		details = "• All sessions, archived ones included, will be MOVED to\n  the parent group ('default' for a top-level group)\n• Sessions will NOT be killed\n• The group structure will be lost"
 		borderColor = ColorRed
 		buttonRow := lipgloss.JoinHorizontal(lipgloss.Center,
 			renderButton("Delete", ColorRed, c.focusedButton == 0), "  ",
