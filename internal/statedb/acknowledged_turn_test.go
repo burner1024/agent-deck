@@ -6,11 +6,11 @@ import (
 	"time"
 )
 
-// TestSetAcknowledgedHook_RecordsTheSeenEventAndUnreadClearsIt pins the
-// shared record of which hook event a user has seen: the acknowledgement sets
-// the flag and stores the event's timestamp beside the row's other extras, and
-// clearing the flag (the u key) drops the record so no process re-applies it.
-func TestSetAcknowledgedHook_RecordsTheSeenEventAndUnreadClearsIt(t *testing.T) {
+// TestSetAcknowledgedTurn_RecordsTheSeenTurnAndUnreadClearsIt pins the
+// shared record of which turn a user has seen: the acknowledgement sets the
+// flag and stores the turn beside the row's other extras, and clearing the
+// flag (the u key) drops every record so no process re-applies one.
+func TestSetAcknowledgedTurn_RecordsTheSeenTurnAndUnreadClearsIt(t *testing.T) {
 	db := newTestDB(t)
 	if err := db.SaveInstance(&InstanceRow{
 		ID: "a1", Title: "a1", ProjectPath: "/tmp", GroupPath: "grp",
@@ -20,30 +20,38 @@ func TestSetAcknowledgedHook_RecordsTheSeenEventAndUnreadClearsIt(t *testing.T) 
 		t.Fatalf("SaveInstance: %v", err)
 	}
 
-	if err := db.SetAcknowledgedHook("a1", 1700000000); err != nil {
-		t.Fatalf("SetAcknowledgedHook: %v", err)
+	if err := db.SetAcknowledgedTurn("a1", ToolDataAcknowledgedHookKey, int64(1700000000)); err != nil {
+		t.Fatalf("SetAcknowledgedTurn hook: %v", err)
+	}
+	if err := db.SetAcknowledgedTurn("a1", ToolDataAcknowledgedOpenCodeKey, "msg_02"); err != nil {
+		t.Fatalf("SetAcknowledgedTurn opencode: %v", err)
 	}
 	statuses, err := db.ReadAllStatuses()
 	if err != nil {
 		t.Fatalf("ReadAllStatuses: %v", err)
 	}
 	if !statuses["a1"].Acknowledged {
-		t.Error("acknowledged = false after SetAcknowledgedHook, want true")
+		t.Error("acknowledged = false after SetAcknowledgedTurn, want true")
 	}
 	td := toolDataOf(t, db, "a1")
-	if got := string(td[ToolDataAcknowledgedHookKey]); got != "1700000000" {
-		t.Errorf("tool_data.%s = %q, want 1700000000", ToolDataAcknowledgedHookKey, got)
-	}
-	if got := string(td["claude_session_id"]); got != `"c1"` {
-		t.Errorf("tool_data.claude_session_id = %q after the acknowledgement, want it kept", got)
+	for key, want := range map[string]string{
+		ToolDataAcknowledgedHookKey:     "1700000000",
+		ToolDataAcknowledgedOpenCodeKey: `"msg_02"`,
+		"claude_session_id":             `"c1"`,
+	} {
+		if got := string(td[key]); got != want {
+			t.Errorf("tool_data.%s = %q, want %s", key, got, want)
+		}
 	}
 
 	if err := db.SetAcknowledged("a1", false); err != nil {
 		t.Fatalf("SetAcknowledged(false): %v", err)
 	}
 	td = toolDataOf(t, db, "a1")
-	if got, ok := td[ToolDataAcknowledgedHookKey]; ok {
-		t.Errorf("tool_data.%s = %s after marking unread, want it removed", ToolDataAcknowledgedHookKey, got)
+	for _, key := range []string{ToolDataAcknowledgedHookKey, ToolDataAcknowledgedOpenCodeKey} {
+		if got, ok := td[key]; ok {
+			t.Errorf("tool_data.%s = %s after marking unread, want it removed", key, got)
+		}
 	}
 	if got := string(td["claude_session_id"]); got != `"c1"` {
 		t.Errorf("tool_data.claude_session_id = %q after marking unread, want it kept", got)
