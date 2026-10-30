@@ -1893,12 +1893,45 @@ func (s *StateDB) SetAcknowledgedStamped(id string, ack bool) (WriteStamps, erro
 		v, at = 1, time.Now().UnixMilli()
 	}
 	if err := withBusyRetry(func() error {
-		_, err := s.db.Exec("UPDATE instances SET acknowledged = ?, acknowledged_at = ? WHERE id = ?", v, at, id)
+		// Clearing also drops SetAcknowledgedHook's record, or the next load
+		// would acknowledge the event again.
+		_, err := s.db.Exec(
+			`UPDATE instances
+			   SET acknowledged = ?, acknowledged_at = ?,
+			       tool_data = CASE WHEN ? = 0 AND json_valid(tool_data)
+			                        THEN json_remove(tool_data, '$.' || ?) ELSE tool_data END
+			 WHERE id = ?`,
+			v, at, v, ToolDataAcknowledgedHookKey, id,
+		)
 		return err
 	}); err != nil {
 		return WriteStamps{}, err
 	}
 	return s.touchStamp()
+}
+
+// ToolDataAcknowledgedHookKey is the tool_data extras-zone key holding the
+// timestamp (unix seconds) of the hook event a user acknowledged.
+const ToolDataAcknowledgedHookKey = "acknowledged_hook_ts"
+
+// SetAcknowledgedHook is SetAcknowledged(id, true) that also records which
+// hook event was seen, so a process that loads the row (a one-pass listing)
+// can tell that event, and no later one, is acknowledged.
+func (s *StateDB) SetAcknowledgedHook(id string, hookTS int64) error {
+	if err := withBusyRetry(func() error {
+		_, err := s.db.Exec(
+			`UPDATE instances
+			   SET acknowledged = 1, acknowledged_at = ?,
+			       tool_data = json_set(COALESCE(tool_data, '{}'), '$.' || ?, ?)
+			 WHERE id = ?`,
+			time.Now().UnixMilli(), ToolDataAcknowledgedHookKey, hookTS, id,
+		)
+		return err
+	}); err != nil {
+		return err
+	}
+	_, err := s.touchStamp()
+	return err
 }
 
 // SetArchived sets or clears the archive timestamp for a single instance via a
