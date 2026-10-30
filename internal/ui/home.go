@@ -6985,10 +6985,7 @@ func (h *Home) attachSelectedLegacy() tea.Cmd {
 		parentInst.SyncSessionIDsToTmux()
 		parentInst.MarkAccessed()
 		if parentInst.GetStatusThreadSafe() == session.StatusWaiting {
-			parentInst.AcknowledgeVisit()
-			if db := statedb.GetGlobal(); db != nil {
-				_ = db.SetAcknowledged(parentInst.ID, true)
-			}
+			_ = parentInst.AcknowledgeSeen(statedb.GetGlobal())
 		}
 		h.isAttaching.Store(true)
 		return execHoldingInput(attachWindowCmd{
@@ -7533,11 +7530,8 @@ func (h *Home) attachSession(inst *session.Instance) tea.Cmd {
 	// - YELLOW (waiting) sessions turn gray when user looks at them
 	// - Detach just lets polling take over naturally
 	if inst.GetStatusThreadSafe() == session.StatusWaiting {
-		inst.AcknowledgeVisit()
-		// Persist ack to SQLite so other instances see it
-		if db := statedb.GetGlobal(); db != nil {
-			_ = db.SetAcknowledged(inst.ID, true)
-		}
+		// Persisted so other instances see it.
+		_ = inst.AcknowledgeSeen(statedb.GetGlobal())
 		statusLog.Debug("acknowledged_on_attach", slog.String("title", inst.Title))
 	}
 

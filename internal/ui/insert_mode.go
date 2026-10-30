@@ -173,10 +173,7 @@ func (h *Home) enterEmbeddedMode() bool {
 	if inst := h.resolveInsertTarget(); inst != nil {
 		h.markSessionVisited(inst) // #2058: embedded focus counts as a visit too
 		if inst.GetStatusThreadSafe() == session.StatusWaiting {
-			inst.AcknowledgeVisit()
-			if db := statedb.GetGlobal(); db != nil {
-				_ = db.SetAcknowledged(inst.ID, true)
-			}
+			_ = inst.AcknowledgeSeen(statedb.GetGlobal())
 		}
 	}
 	return true

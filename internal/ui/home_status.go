@@ -951,11 +951,8 @@ func (h *Home) consumeAckSignal() string {
 	inst := h.instanceByID[signalSessionID]
 	if inst != nil {
 		if ts := inst.GetTmuxSession(); ts != nil {
-			inst.AcknowledgeVisit()
-			// Persist ack to SQLite so other instances see it
-			if db := statedb.GetGlobal(); db != nil {
-				_ = db.SetAcknowledged(inst.ID, true)
-			}
+			// Persisted so other instances see it.
+			_ = inst.AcknowledgeSeen(statedb.GetGlobal())
 			_ = inst.UpdateStatus()
 			notifLog.Debug(
 				"session_acknowledged",
