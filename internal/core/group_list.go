@@ -109,8 +109,13 @@ func groupListFromTree(tree *session.GroupTree) GroupListOut {
 }
 
 // groupListRefreshStatus refreshes one session's status for the counts; a
-// variable so tests can count the refreshes.
-var groupListRefreshStatus = func(inst *session.Instance) { _ = inst.UpdateStatus() }
+// variable so tests can count the refreshes. UpdateStatusOnly, not
+// UpdateStatus: a listing only reads statuses, and UpdateStatus's metadata
+// sync can run the opencode CLI for every live OpenCode session (seconds each).
+var groupListRefreshStatus = func(inst *session.Instance) {
+	var pass session.StatusUpdatePass
+	_ = pass.UpdateStatusOnly(inst)
+}
 
 // refreshTreeStatuses refreshes every session of the tree once. A session is
 // counted once per ancestor group; refreshing it at each count cost one full

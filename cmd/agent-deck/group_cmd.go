@@ -121,8 +121,14 @@ func printGroupHelp() {
 }
 
 // groupListRefreshStatus refreshes one session's status for the group
-// listings; a variable so tests can count the refreshes.
-var groupListRefreshStatus = func(inst *session.Instance) { _ = inst.UpdateStatus() }
+// listings; a variable so tests can count the refreshes. UpdateStatusOnly, not
+// UpdateStatus: a listing only reads statuses, and UpdateStatus's metadata
+// sync can run the opencode CLI for every live OpenCode session (seconds each,
+// on every `group list` and every remote-agent change probe).
+var groupListRefreshStatus = func(inst *session.Instance) {
+	var pass session.StatusUpdatePass
+	_ = pass.UpdateStatusOnly(inst)
+}
 
 // refreshGroupTreeStatuses refreshes every session in the tree once. The
 // group listings count each group's whole subtree, so a session is counted
@@ -177,7 +183,8 @@ func buildGroupListJSON(groupTree *session.GroupTree) ([]byte, error) {
 
 	// Build hierarchical structure (with recursive session counts - Issue #48)
 	buildGroupJSON := func(g *session.Group) groupJSON {
-		// Count status recursively for this group and all subgroups
+		// Count status recursively for this group and all subgroups, as the
+		// caller's status pass left it.
 		status := groupStatusJSON{}
 		for path, subGroup := range groupTree.Groups {
 			if path == g.Path || strings.HasPrefix(path, g.Path+"/") {
