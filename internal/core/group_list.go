@@ -57,9 +57,9 @@ func groupList(ctx context.Context, in GroupListIn) (GroupListOut, error) {
 	if err != nil {
 		return GroupListOut{}, err
 	}
-	// Warm the pane-title cache and hook statuses once so the counts match
-	// the TUI and /api/menu (#610).
-	session.RefreshInstancesForCLIStatus(d.instances)
+	// One status pass, the one session list runs, so the counts match the
+	// TUI and /api/menu (#610).
+	session.RefreshListingStatuses(d.instances)
 	tree := session.NewGroupTreeWithGroups(d.instances, d.groups)
 
 	out := GroupListOut{
@@ -103,7 +103,8 @@ func groupList(ctx context.Context, in GroupListIn) (GroupListOut, error) {
 	return out, nil
 }
 
-// groupStatus refreshes and counts every session in path and its subgroups.
+// groupStatus counts every session in path and its subgroups by the status
+// groupList's status pass left it.
 func groupStatus(tree *session.GroupTree, path string) GroupStatus {
 	var st GroupStatus
 	for p, sub := range tree.Groups {
@@ -111,7 +112,6 @@ func groupStatus(tree *session.GroupTree, path string) GroupStatus {
 			continue
 		}
 		for _, sess := range sub.Sessions {
-			_ = sess.UpdateStatus()
 			switch sess.Status {
 			case session.StatusRunning:
 				st.Running++
