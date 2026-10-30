@@ -1,14 +1,21 @@
-# Manual linux/amd64 build: the release-shaped archive and checksums.txt from
-# tools/dist-local, as a run artifact. No tests, tag or release; the artifact
-# installs on a remote with `agent-deck remote update <name> --from-build <dir>`.
+# linux/amd64 build of every push to dev: the release-shaped archive and
+# checksums.txt from tools/dist-local, as a run artifact. No tests, tag or
+# release; the artifact installs on a remote with
+# `agent-deck remote update <name> --from-build <dir>`. A push trigger, since
+# GitHub runs a workflow_dispatch workflow only from the default branch (main).
 
 name: Build linux/amd64
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [dev]
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
