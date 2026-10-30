@@ -784,11 +784,13 @@ type Instance struct {
 	// same pass captures afterwards can revert it (review round 3 P2-3).
 	hookLagFlipped bool
 
-	// ackedHookTS is the hook event (unix seconds) the stored row records as
-	// acknowledged, ackedHookApplied the record this object last applied
-	// (attach_ack.go).
-	ackedHookTS      int64
-	ackedHookApplied int64
+	// The turn the stored row records as acknowledged, and the record this
+	// object last applied (attach_ack.go): a hook event (unix seconds) for
+	// hook tools, the newest message ID for OpenCode.
+	ackedHookTS          int64
+	ackedHookApplied     int64
+	ackedOpenCodeMessage string
+	ackedOpenCodeApplied string
 
 	// Background work (issue #2473, background_work.go). bgWork is the last
 	// merged pane+transcript verdict; bgWorkActive marks a running status that
