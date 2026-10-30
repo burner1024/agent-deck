@@ -146,12 +146,12 @@ func buildGroupListJSON(groupTree *session.GroupTree) ([]byte, error) {
 
 	// Build hierarchical structure (with recursive session counts - Issue #48)
 	buildGroupJSON := func(g *session.Group) groupJSON {
-		// Count status recursively for this group and all subgroups
+		// Count status recursively for this group and all subgroups, as the
+		// caller's status pass left it.
 		status := groupStatusJSON{}
 		for path, subGroup := range groupTree.Groups {
 			if path == g.Path || strings.HasPrefix(path, g.Path+"/") {
 				for _, sess := range subGroup.Sessions {
-					_ = sess.UpdateStatus() // Refresh status
 					switch sess.Status {
 					case session.StatusRunning:
 						status.Running++
@@ -255,11 +255,9 @@ func handleGroupList(profile string, args []string) {
 		exitCLI(1)
 	}
 
-	// Warm tmux pane-title cache + load hook statuses once up-front so
-	// the per-status counts below match the TUI and /api/menu view
-	// (issue #610). Without this the nested UpdateStatus calls each run
-	// with a cold cache and miss the Claude "working" spinner.
-	session.RefreshInstancesForCLIStatus(instances)
+	// One status pass, the one list --json runs, so the per-status counts
+	// below match the TUI and /api/menu view (issue #610).
+	session.RefreshListingStatuses(instances)
 
 	// Build group tree
 	groupTree := session.NewGroupTreeWithGroups(instances, groups)
@@ -333,7 +331,6 @@ func handleGroupList(profile string, args []string) {
 			for path, subGroup := range groupTree.Groups {
 				if path == g.Path || strings.HasPrefix(path, g.Path+"/") {
 					for _, sess := range subGroup.Sessions {
-						_ = sess.UpdateStatus()
 						switch sess.Status {
 						case session.StatusRunning:
 							running++

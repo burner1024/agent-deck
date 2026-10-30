@@ -51,6 +51,20 @@ func CLIStatusCandidates(instances []*Instance) ([]*Instance, map[*Instance]bool
 	return refresh, cached
 }
 
+// RefreshListingStatuses is the status pass of a listing that reports only
+// statuses (group counts): the probe candidates above, one warm-up and one
+// UpdateStatusOnly each. A listing never runs UpdateStatus, whose metadata
+// sync can run the opencode CLI for every live OpenCode session.
+func RefreshListingStatuses(instances []*Instance) {
+	refresh, _ := CLIStatusCandidates(instances)
+	RefreshInstancesForCLIStatus(refresh)
+	var pass StatusUpdatePass
+	for _, inst := range refresh {
+		// As in list --json: a failed probe has already set the row to error.
+		_ = pass.UpdateStatusOnly(inst)
+	}
+}
+
 // classifyAbsentError gives an error row whose tmux session is gone the same
 // terminated-pane verdict updateStatus's absent branch gives it: the tracked
 // command's exit receipt (#2597: substate process-exited plus exit_code) and
