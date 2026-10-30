@@ -1,0 +1,50 @@
+# Manual linux/amd64 build: the release-shaped archive and checksums.txt from
+# tools/dist-local, as a run artifact. No tests, tag or release; the artifact
+# installs on a remote with `agent-deck remote update <name> --from-build <dir>`.
+
+name: Build linux/amd64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6
+        with:
+          go-version-file: go.mod
+
+      # The code's version plus the commit as build metadata, the shape
+      # dist-local itself gives a local build.
+      - name: Version
+        id: version
+        run: echo "version=$(sed -n 's/^var Version = "\([^"]*\)".*/\1/p' cmd/agent-deck/main.go)+dev.${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      # dist-local always builds every release platform; only linux/amd64 is kept.
+      - name: Build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: go run ./tools/dist-local -version "$VERSION" -output "$RUNNER_TEMP/dist"
+
+      - name: Keep linux/amd64
+        run: |
+          mkdir "$RUNNER_TEMP/out" && mv "$RUNNER_TEMP"/dist/*_linux_amd64.tar.gz "$RUNNER_TEMP/out/"
+          grep '_linux_amd64\.tar\.gz$' "$RUNNER_TEMP/dist/checksums.txt" > "$RUNNER_TEMP/out/checksums.txt"
+
+      - name: Upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agent-deck-${{ steps.version.outputs.version }}-linux-amd64
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
