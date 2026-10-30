@@ -229,7 +229,7 @@ Inside the search prompt, `/waiting`, `/running` and `/idle` filter by status.
 
 A Claude session whose foreground turn is over but which still has a Workflow, background agents, shells or a Monitor in flight is `●` running (substate `background-work`); the preview shows one line under the status, `background: <task> n/m · <elapsed>` (for example `background: comms-followon-round3 3/5 · 18m32s`). When the work reports back the session turns `◐` waiting, then `○` idle once acknowledged.
 
-Federated remote rows currently carry coarse running/waiting/idle/error status; local Honest Status substates are not included in the remote payload. Opening a remote row acknowledges it on its host, as opening a local one does, for tools that report status through hooks (Claude, Codex, Gemini and others; not OpenCode).
+Federated remote rows currently carry coarse running/waiting/idle/error status; local Honest Status substates are not included in the remote payload. Opening a remote row acknowledges it on its host, as opening a local one does, for tools that report status through hooks (Claude, Codex, Gemini and others) and for OpenCode 1.x sessions started with their event-server port (the default; not with `[opencode].disable_sse_status`).
 
 ## Dialogs
 

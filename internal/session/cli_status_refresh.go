@@ -36,6 +36,9 @@ func RefreshInstancesForCLIStatus(instances []*Instance) {
 		if inst == nil {
 			continue
 		}
+		// OpenCode has no hooks: a stored acknowledgement is checked against
+		// its own server instead.
+		inst.applyAcknowledgedOpenCodeTurn()
 		if !HookStatusTool(inst.Tool) {
 			continue
 		}
