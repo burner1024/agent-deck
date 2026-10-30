@@ -1893,15 +1893,15 @@ func (s *StateDB) SetAcknowledgedStamped(id string, ack bool) (WriteStamps, erro
 		v, at = 1, time.Now().UnixMilli()
 	}
 	if err := withBusyRetry(func() error {
-		// Clearing also drops SetAcknowledgedHook's record, or the next load
-		// would acknowledge the event again.
+		// Clearing also drops SetAcknowledgedTurn's record, or the next load
+		// would acknowledge the turn again.
 		_, err := s.db.Exec(
 			`UPDATE instances
 			   SET acknowledged = ?, acknowledged_at = ?,
 			       tool_data = CASE WHEN ? = 0 AND json_valid(tool_data)
-			                        THEN json_remove(tool_data, '$.' || ?) ELSE tool_data END
+			                        THEN json_remove(tool_data, '$.' || ?, '$.' || ?) ELSE tool_data END
 			 WHERE id = ?`,
-			v, at, v, ToolDataAcknowledgedHookKey, id,
+			v, at, v, ToolDataAcknowledgedHookKey, ToolDataAcknowledgedOpenCodeKey, id,
 		)
 		return err
 	}); err != nil {
@@ -1910,21 +1910,26 @@ func (s *StateDB) SetAcknowledgedStamped(id string, ack bool) (WriteStamps, erro
 	return s.touchStamp()
 }
 
-// ToolDataAcknowledgedHookKey is the tool_data extras-zone key holding the
-// timestamp (unix seconds) of the hook event a user acknowledged.
-const ToolDataAcknowledgedHookKey = "acknowledged_hook_ts"
+// The tool_data extras-zone keys naming the turn a user acknowledged: the
+// hook event's timestamp (unix seconds) for hook tools, the newest message ID
+// for OpenCode.
+const (
+	ToolDataAcknowledgedHookKey     = "acknowledged_hook_ts"
+	ToolDataAcknowledgedOpenCodeKey = "acknowledged_opencode_message"
+)
 
-// SetAcknowledgedHook is SetAcknowledged(id, true) that also records which
-// hook event was seen, so a process that loads the row (a one-pass listing)
-// can tell that event, and no later one, is acknowledged.
-func (s *StateDB) SetAcknowledgedHook(id string, hookTS int64) error {
+// SetAcknowledgedTurn is SetAcknowledged(id, true) that also records which
+// turn was seen under key (one of the keys above), so a process that loads
+// the row (a one-pass listing) can tell that turn, and no later one, is
+// acknowledged.
+func (s *StateDB) SetAcknowledgedTurn(id, key string, turn any) error {
 	if err := withBusyRetry(func() error {
 		_, err := s.db.Exec(
 			`UPDATE instances
 			   SET acknowledged = 1, acknowledged_at = ?,
 			       tool_data = json_set(COALESCE(tool_data, '{}'), '$.' || ?, ?)
 			 WHERE id = ?`,
-			time.Now().UnixMilli(), ToolDataAcknowledgedHookKey, hookTS, id,
+			time.Now().UnixMilli(), key, turn, id,
 		)
 		return err
 	}); err != nil {
