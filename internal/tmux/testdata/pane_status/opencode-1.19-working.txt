@@ -1,0 +1,45 @@
+
+  ┃                                                                                                                     New session - 2026-01-01T00:00:00.
+  ┃  say hello                                                                                                          193Z
+  ┃
+                                                                                                                        Context
+     word0                                                                                                              0 tokens
+                                                                                                                        0% used
+     ▣  Build · Fake                                                                                                    $0.00 spent
+
+                                                                                                                        LSP
+                                                                                                                        LSPs are disabled
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · Fake Fake                                                                                                  ~/proj:master
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   ⬝⬝⬝■■■■■  esc interrupt                                                               tab agents  ctrl+p commands    • OpenCode 1.19.5
+
