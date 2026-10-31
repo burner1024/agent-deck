@@ -10,7 +10,9 @@ import (
 // (■ and ⬝ frames) and "esc interrupt" share the bottom row with the key hints
 // and the version, so the bare-hint match misses it and a running session read
 // as waiting. The frames are captures of a real OpenCode 1.19.5 TUI streaming a
-// reply (paths and dates replaced); the ready and done frames carry no pulse.
+// reply (paths and dates replaced); the ready and done frames carry no pulse,
+// and a permission prompt replaces the footer, so a turn waiting on approval
+// does not read as running.
 func TestOpenCodeBusyFooter(t *testing.T) {
 	for _, tc := range []struct {
 		file string
@@ -20,6 +22,7 @@ func TestOpenCodeBusyFooter(t *testing.T) {
 		{"opencode-1.19-working-dim.txt", true},
 		{"opencode-1.19-ready.txt", false},
 		{"opencode-1.19-done.txt", false},
+		{"opencode-1.19-permission.txt", false},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			data, err := os.ReadFile(filepath.Join("testdata", "pane_status", tc.file))
