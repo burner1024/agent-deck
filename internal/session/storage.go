@@ -95,9 +95,9 @@ type InstanceData struct {
 	// persisted completed-turn samples, extras zone (see hook_lag.go).
 	HookLag hookLagRecord `json:"hook_lag,omitempty"`
 	// AcknowledgedHookTS and AcknowledgedOpenCode mirror Instance.ackedHookTS
-	// and ackedOpenCodeMessage, extras zone (see attach_ack.go).
+	// and ackedOpenCodeUpdated, extras zone (see attach_ack.go).
 	AcknowledgedHookTS   int64     `json:"acknowledged_hook_ts,omitempty"`
-	AcknowledgedOpenCode string    `json:"acknowledged_opencode_message,omitempty"`
+	AcknowledgedOpenCode int64     `json:"acknowledged_opencode_updated,omitempty"`
 	ArchivedAt           time.Time `json:"archived_at,omitempty"`
 	SupersededBy         string    `json:"superseded_by,omitempty"`
 	Supersedes           string    `json:"supersedes,omitempty"`
@@ -1961,7 +1961,7 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 			hookLag:               instData.HookLag,
 			hookLagPersisted:      instData.HookLag,
 			ackedHookTS:           instData.AcknowledgedHookTS,
-			ackedOpenCodeMessage:  instData.AcknowledgedOpenCode,
+			ackedOpenCodeUpdated:  instData.AcknowledgedOpenCode,
 			hookLagDB:             s.db,
 			Sandbox:               instData.Sandbox,
 			SandboxContainer:      instData.SandboxContainer,
