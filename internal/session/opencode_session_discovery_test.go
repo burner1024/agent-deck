@@ -187,7 +187,7 @@ func TestQueryOpenCodeSessionsHTTP_RejectsOversizedResponse(t *testing.T) {
 
 	inst := &Instance{Tool: "opencode", ProjectPath: "/project"}
 	port := server.Listener.Addr().(*net.TCPAddr).Port
-	if _, err := inst.queryOpenCodeSessionsHTTP(port, inst.ProjectPath); err == nil {
+	if _, err := inst.queryOpenCodeSessionsHTTP(t.Context(), port, inst.ProjectPath); err == nil {
 		t.Fatal("oversized OpenCode session response unexpectedly succeeded")
 	}
 }

@@ -786,11 +786,12 @@ type Instance struct {
 
 	// The turn the stored row records as acknowledged, and the record this
 	// object last applied (attach_ack.go): a hook event (unix seconds) for
-	// hook tools, the newest message ID for OpenCode.
+	// hook tools, the project's latest session update (unix milliseconds) for
+	// OpenCode.
 	ackedHookTS          int64
 	ackedHookApplied     int64
-	ackedOpenCodeMessage string
-	ackedOpenCodeApplied string
+	ackedOpenCodeUpdated int64
+	ackedOpenCodeApplied int64
 
 	// Background work (issue #2473, background_work.go). bgWork is the last
 	// merged pane+transcript verdict; bgWorkActive marks a running status that
