@@ -184,6 +184,16 @@ type openCodeHTTPSessionMetadata struct {
 	} `json:"time"`
 }
 
+// inProject reports whether the session runs in the project directory, given
+// as normalizePath returns it.
+func (s openCodeSessionMetadata) inProject(normalizedProjectPath string) bool {
+	dir := s.Directory
+	if dir == "" {
+		dir = s.Path
+	}
+	return dir != "" && normalizePath(dir) == normalizedProjectPath
+}
+
 func (s openCodeHTTPSessionMetadata) flatten() openCodeSessionMetadata {
 	directory := s.Directory
 	if directory == "" {
@@ -248,12 +258,7 @@ func findBestOpenCodeSession(sessions []openCodeSessionMetadata, projectPath, cu
 	activityThreshold := activityAt - opencodeStartupTimeSkew.Milliseconds()
 
 	for _, sess := range sessions {
-		sessDir := sess.Directory
-		if sessDir == "" {
-			sessDir = sess.Path
-		}
-
-		if sessDir == "" || normalizePath(sessDir) != normalizedProjectPath {
+		if !sess.inProject(normalizedProjectPath) {
 			continue
 		}
 
@@ -350,8 +355,10 @@ func (i *Instance) queryOpenCodeSession() string {
 
 	var sessions []openCodeSessionMetadata
 	if port > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		var err error
-		sessions, err = i.queryOpenCodeSessionsHTTP(port, projectPath)
+		sessions, err = i.queryOpenCodeSessionsHTTP(ctx, port, projectPath)
+		cancel()
 		if err != nil {
 			sessionLog.Debug("opencode_http_query_failed",
 				slog.String("dir", logging.SanitizeValue(projectPath)),
@@ -383,10 +390,7 @@ func (i *Instance) queryOpenCodeSession() string {
 	return bestMatch
 }
 
-func (i *Instance) queryOpenCodeSessionsHTTP(port int, projectPath string) ([]openCodeSessionMetadata, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
+func (i *Instance) queryOpenCodeSessionsHTTP(ctx context.Context, port int, projectPath string) ([]openCodeSessionMetadata, error) {
 	endpoint := url.URL{
 		Scheme: "http",
 		Host:   net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
