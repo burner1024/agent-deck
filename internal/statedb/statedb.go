@@ -1911,18 +1911,18 @@ func (s *StateDB) SetAcknowledgedStamped(id string, ack bool) (WriteStamps, erro
 }
 
 // The tool_data extras-zone keys naming the turn a user acknowledged: the
-// hook event's timestamp (unix seconds) for hook tools, the newest message ID
-// for OpenCode.
+// hook event's timestamp (unix seconds) for hook tools, the project's latest
+// session update (unix milliseconds) for OpenCode.
 const (
 	ToolDataAcknowledgedHookKey     = "acknowledged_hook_ts"
-	ToolDataAcknowledgedOpenCodeKey = "acknowledged_opencode_message"
+	ToolDataAcknowledgedOpenCodeKey = "acknowledged_opencode_updated"
 )
 
 // SetAcknowledgedTurn is SetAcknowledged(id, true) that also records which
 // turn was seen under key (one of the keys above), so a process that loads
 // the row (a one-pass listing) can tell that turn, and no later one, is
 // acknowledged.
-func (s *StateDB) SetAcknowledgedTurn(id, key string, turn any) error {
+func (s *StateDB) SetAcknowledgedTurn(id, key string, turn int64) error {
 	if err := withBusyRetry(func() error {
 		_, err := s.db.Exec(
 			`UPDATE instances

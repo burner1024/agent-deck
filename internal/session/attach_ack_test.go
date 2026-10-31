@@ -2,7 +2,6 @@ package session
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -79,25 +78,27 @@ func TestAcknowledgeIfWaiting_SeenStopIsIdleForLaterProcesses(t *testing.T) {
 }
 
 // TestAcknowledgeIfWaiting_OpenCodeSeenTurnIsIdle covers a tool with no
-// hooks: the turn seen is the newest message the session's OpenCode server
-// reports on the --port the pane was started with.
+// hooks: the turn seen is the latest session update the pane's own OpenCode
+// server (the --port it was started with) reports for the project. The bound
+// session ID is not trusted for it: only processes running the full status
+// update rebind it, so after an in-pane /new it names a conversation that
+// never changes again, and a seen turn there would hide every later one.
 func TestAcknowledgeIfWaiting_OpenCodeSeenTurnIsIdle(t *testing.T) {
 	skipIfNoTmuxBinary(t)
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	// OpenCode 1.0 ignores limit and lists every message oldest first; later
-	// releases return the newest page. The newest ID is the turn either way.
 	var mu sync.Mutex
-	messages := `[{"info":{"id":"msg_01"}},{"info":{"id":"msg_02"}}]`
+	paneUpdated := 200
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/session/ses_ack/message" {
+		if r.URL.Path != "/session" {
 			http.NotFound(w, r)
 			return
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		_, _ = io.WriteString(w, messages)
+		_, _ = fmt.Fprintf(w, `[{"id":"ses_old","directory":%q,"time":{"created":50,"updated":100}},`+
+			`{"id":"ses_pane","directory":%q,"time":{"created":150,"updated":%d}}]`, tmpHome, tmpHome, paneUpdated)
 	}))
 	defer srv.Close()
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
@@ -107,7 +108,8 @@ func TestAcknowledgeIfWaiting_OpenCodeSeenTurnIsIdle(t *testing.T) {
 		t.Fatal(err)
 	}
 	inst := NewInstanceWithTool("opencode-ack", tmpHome, "opencode")
-	inst.OpenCodeSessionID = "ses_ack"
+	// Bound before an in-pane /new moved the conversation to ses_pane.
+	inst.OpenCodeSessionID = "ses_old"
 	// As Instance.Start launches every tool but shell: the command is the
 	// pane's initial process, so tmux keeps it as the pane's start command.
 	inst.tmuxSession.RunCommandAsInitialProcess = true
@@ -150,9 +152,9 @@ func TestAcknowledgeIfWaiting_OpenCodeSeenTurnIsIdle(t *testing.T) {
 		}
 	}
 
-	// The next turn adds messages: unseen.
+	// The next turn, in the pane's conversation: unseen.
 	mu.Lock()
-	messages = `[{"info":{"id":"msg_04"}}]`
+	paneUpdated = 300
 	mu.Unlock()
 	if status, _ := cliPass(t, load()); status != StatusWaiting {
 		t.Fatalf("after a later turn = %q, want waiting", status)
