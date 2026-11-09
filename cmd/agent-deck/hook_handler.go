@@ -396,6 +396,21 @@ func handleHookHandlerReceivedAt(receivedAt time.Time) {
 		logBgWorkerHookDropOnce(instanceID, bgSessionID, payload.HookEventName)
 		return
 	}
+	// A Claude, Gemini, Cursor or pi process started from a Codex pane's shell
+	// inherits AGENTDECK_INSTANCE_ID; its hooks are not the Codex session's.
+	// AGENTDECK_TOOL is exported only by Codex-family (and Hermes/DeepSeek)
+	// launches, and Codex hook payloads always carry turn_id. Panes without
+	// AGENTDECK_TOOL and plain "codex" panes pay no I/O on the synchronous
+	// PreToolUse path; other tool names read the cached tool definitions.
+	if tool := strings.TrimSpace(os.Getenv("AGENTDECK_TOOL")); tool != "" && session.IsCodexCompatible(tool) &&
+		strings.TrimSpace(rawString(payload.TurnID)) == "" {
+		foreignSessionID := strings.TrimSpace(payload.SessionID)
+		if foreignSessionID == "" {
+			foreignSessionID = strings.TrimSpace(payload.ConversationID)
+		}
+		logHookDropOnce(instanceID, foreignSessionID, payload.HookEventName, tool, "foreign-harness-dropped", "hook_from_foreign_harness")
+		return
+	}
 	// Agent activity tracing (ASK-129): one redacted spool line, no SQLite,
 	// errors ignored; a no-op unless [trace] level / AGENTDECK_TRACE is on.
 	// Before the PreToolUse sync gate: tracing records every tool edge it is
