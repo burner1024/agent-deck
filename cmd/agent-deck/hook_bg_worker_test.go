@@ -130,3 +130,60 @@ func TestScrubClaudeJobDirForCommand(t *testing.T) {
 	}
 	scrubClaudeJobDirForCommand(nil) // bare TUI launch: no panic, still scrubbed
 }
+
+// A conversation the pane's own Claude parked into a background job runs in a
+// kind=bg worker, but it is still this pane's session: the pane's interactive
+// record names the job in parkedJobId and the pane in tmux. Its hooks are
+// credited; a job parked by another pane is still dropped (#2683).
+func TestHookHandler_BgWorkerOfJobParkedByThisPane(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		parkedTmux string
+		jobDirOnly bool
+		credited   bool
+	}{
+		{name: "parked by this pane", parkedTmux: "agentdeck_pane-a_1234abcd:@8.%8", credited: true},
+		{name: "parked by this pane, job dir only", parkedTmux: "agentdeck_pane-a_1234abcd:@8.%8", jobDirOnly: true, credited: true},
+		{name: "parked by another pane", parkedTmux: "agentdeck_pane-b_5678abcd:@2.%3"},
+		{name: "not parked anywhere"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			claudeDir := setupBgWorkerHookEnv(t)
+			old := hookInstanceTmuxSession
+			hookInstanceTmuxSession = func(id string) string {
+				if id == "inst-pane-a" {
+					return "agentdeck_pane-a_1234abcd"
+				}
+				return ""
+			}
+			t.Cleanup(func() { hookInstanceTmuxSession = old })
+			sessionsDir := filepath.Join(claudeDir, "sessions")
+			if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			const job = "0a586035"
+			if tc.jobDirOnly {
+				t.Setenv("CLAUDE_JOB_DIR", filepath.Join(claudeDir, "jobs", job))
+			} else {
+				pid := os.Getppid()
+				rec := fmt.Sprintf(`{"pid":%d,"sessionId":%q,"kind":"bg","jobId":%q}`, pid, bgWorkerTestSession, job)
+				if err := os.WriteFile(filepath.Join(sessionsDir, fmt.Sprintf("%d.json", pid)), []byte(rec), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.parkedTmux != "" {
+				rec := fmt.Sprintf(`{"pid":1,"kind":"interactive","parkedJobId":%q,"tmux":%q}`, job, tc.parkedTmux)
+				if err := os.WriteFile(filepath.Join(sessionsDir, "1.json"), []byte(rec), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runBgWorkerHook(t)
+			if got := hookStatusWritten(t); got != tc.credited {
+				t.Fatalf("status written = %v, want %v", got, tc.credited)
+			}
+			if got := lifecycleLogHasBgReject(t); got == tc.credited {
+				t.Fatalf("bg-worker reject logged = %v, want %v", got, !tc.credited)
+			}
+		})
+	}
+}

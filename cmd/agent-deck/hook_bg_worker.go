@@ -34,39 +34,129 @@ const maxBgWorkerAncestorHops = 3
 // environment, and treating it as proof would drop every hook on that server.
 // It is only consulted when no such record is found (e.g. /proc is missing,
 // or the worker wrote none).
-func hookFromClaudeBackgroundWorker() bool {
-	if kind, ok := nearestClaudeAncestorKind(os.Getppid()); ok {
-		return kind == "bg"
+//
+// A worker running a job that this instance's own pane parked (the pane's
+// record names the job in parkedJobId and the pane's tmux session in tmux) is
+// this pane's conversation, so its hooks are credited, not dropped.
+func hookFromClaudeBackgroundWorker(instanceID string) bool {
+	claudeDir := claudeConfigDirForHook()
+	jobID := ""
+	if rec, ok := nearestClaudeAncestorRecord(claudeDir, os.Getppid()); ok {
+		if rec.Kind != "bg" {
+			return false
+		}
+		jobID = rec.JobID
+	} else {
+		jobDir := strings.TrimSpace(os.Getenv("CLAUDE_JOB_DIR"))
+		if jobDir == "" {
+			return false
+		}
+		jobID = filepath.Base(jobDir)
 	}
-	return strings.TrimSpace(os.Getenv("CLAUDE_JOB_DIR")) != ""
+	return !jobParkedByInstancePane(claudeDir, jobID, instanceID)
 }
 
-// nearestClaudeAncestorKind walks up from pid (at most
-// maxBgWorkerAncestorHops processes) and returns the kind recorded in the first
-// ~/.claude/sessions/<pid>.json that carries one.
-func nearestClaudeAncestorKind(pid int) (string, bool) {
-	claudeDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
+// claudeSessionRecord is the part of a ~/.claude/sessions/<pid>.json record
+// the hook handler reads.
+type claudeSessionRecord struct {
+	Kind        string `json:"kind"`
+	JobID       string `json:"jobId"`
+	ParkedJobID string `json:"parkedJobId"`
+	Tmux        string `json:"tmux"`
+}
+
+func claudeConfigDirForHook() string {
+	if dir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); dir != "" {
+		return dir
+	}
+	dir, err := sandboxguard.HomeJoin("Claude config dir (~/.claude)", ".claude")
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
+// nearestClaudeAncestorRecord walks up from pid (at most
+// maxBgWorkerAncestorHops processes) and returns the first
+// ~/.claude/sessions/<pid>.json record that names a kind.
+func nearestClaudeAncestorRecord(claudeDir string, pid int) (claudeSessionRecord, bool) {
 	if claudeDir == "" {
-		dir, err := sandboxguard.HomeJoin("Claude config dir (~/.claude)", ".claude")
-		if err != nil {
-			return "", false
-		}
-		claudeDir = dir
+		return claudeSessionRecord{}, false
 	}
 	for hop := 0; hop < maxBgWorkerAncestorHops && pid > 1; hop++ {
 		data, err := os.ReadFile(filepath.Join(claudeDir, "sessions", strconv.Itoa(pid)+".json"))
 		if err == nil {
-			var rec struct {
-				Kind string `json:"kind"`
-			}
+			var rec claudeSessionRecord
 			if json.Unmarshal(data, &rec) == nil && strings.TrimSpace(rec.Kind) != "" {
-				return strings.TrimSpace(rec.Kind), true
+				rec.Kind = strings.TrimSpace(rec.Kind)
+				rec.JobID = strings.TrimSpace(rec.JobID)
+				return rec, true
 			}
-			return "", false
+			return claudeSessionRecord{}, false
 		}
 		pid = parentPIDOf(pid)
 	}
-	return "", false
+	return claudeSessionRecord{}, false
+}
+
+// hookInstanceTmuxSession returns the tmux session name of an agent-deck
+// instance, or "" when unknown; a variable so tests need no state database.
+var hookInstanceTmuxSession = func(instanceID string) string {
+	storage, err := session.NewLiveReadOnlyStorageWithProfile("")
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = storage.Close() }()
+	row, err := storage.GetDB().LoadInstanceByID(instanceID)
+	if err != nil || row == nil {
+		return ""
+	}
+	return row.TmuxSession
+}
+
+// jobParkedByInstancePane reports whether a non-bg Claude record parks jobID
+// and sits in the tmux session of instanceID. The tmux field reads
+// "<session>:@<window>.%<pane>". The state database is opened only when some
+// record parks the job, so a foreign worker's hook costs one directory read.
+func jobParkedByInstancePane(claudeDir, jobID, instanceID string) bool {
+	if claudeDir == "" || jobID == "" || jobID == "." || jobID == string(filepath.Separator) {
+		return false
+	}
+	entries, err := os.ReadDir(filepath.Join(claudeDir, "sessions"))
+	if err != nil {
+		return false
+	}
+	var parkedIn []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(claudeDir, "sessions", e.Name()))
+		if err != nil {
+			continue
+		}
+		var rec claudeSessionRecord
+		if json.Unmarshal(data, &rec) != nil || strings.TrimSpace(rec.Kind) == "bg" ||
+			strings.TrimSpace(rec.ParkedJobID) != jobID {
+			continue
+		}
+		if name, _, ok := strings.Cut(strings.TrimSpace(rec.Tmux), ":"); ok && name != "" {
+			parkedIn = append(parkedIn, name)
+		}
+	}
+	if len(parkedIn) == 0 {
+		return false
+	}
+	own := hookInstanceTmuxSession(instanceID)
+	if own == "" {
+		return false
+	}
+	for _, name := range parkedIn {
+		if name == own {
+			return true
+		}
+	}
+	return false
 }
 
 // scrubClaudeJobDirForCommand removes CLAUDE_JOB_DIR from this process's
