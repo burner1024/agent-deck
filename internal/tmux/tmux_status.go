@@ -1025,7 +1025,7 @@ func (s *Session) BackgroundWorkSince(notBefore time.Time) (work BackgroundWork,
 		return work, blocked, foregroundBusy
 	}
 	stripped := StripANSI(rawContent)
-	work = ParseClaudeBackgroundWork(stripped)
+	work = claudePaneBackgroundWork(stripped)
 
 	s.mu.Lock()
 	content := trimClaudeTrailingRoster(stripped)

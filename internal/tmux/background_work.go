@@ -46,6 +46,10 @@ import (
 //     turn line above the input box. Once the background work reports back,
 //     Claude prints the notification turn BELOW it, so an older Waiting line
 //     still inside the scan window is history, not state.
+//   - an agent roster row (glyph, type, description, elapsed; no n/m) is NOT
+//     work on its own: it lingers after the agent finished. It is counted
+//     (ClaudeRosterAgentRows) and the session layer accepts it only with a
+//     pending background agent in the transcript.
 //   - the shell / monitor counter counts only on the footer line, which
 //     Claude redraws live (the "N shells still running" text on a turn's
 //     completion line is printed once and goes stale, so it is not used).
@@ -63,6 +67,13 @@ var (
 	// workflow has no token count yet); the glyph varies with the spinner
 	// state (○ ◯ ◐ ◑ ◒ ◓ ● ◉ ◌).
 	claudeWorkflowRowRe = regexp.MustCompile(`^[○◯◐◑◒◓●◉◌]\s+(\S(?:.*?\S)?)\s+(?:[▰▱]+\s+)?(\d+)/(\d+)\s+·\s+(\d+[hms](?:\s?\d+[hms])*)\s*(?:·.*)?$`)
+
+	// claudeRosterAgentRowRe is the roster row of an agent under the footer:
+	// glyph, agent type, optional description, elapsed, optional token count
+	// ("◯ code-worker  Checking tidy  20m 15s · ↓ 143.4k tokens"). The elapsed
+	// field is required; the description is lazy so a spaced elapsed
+	// ("20m 15s") is not split.
+	claudeRosterAgentRowRe = regexp.MustCompile(`^[○◯◐◑◒◓●◉◌]\s+\S+(?:\s+.*?)?\s+(\d+[hms](?:\s?\d+[hms])*)(?:\s+·\s+[↓↑]\s*\S+\s+tokens)?$`)
 
 	// claudeFooterCounterRe is the live shell / monitor counter segment of
 	// the footer ("· 1 shell ·", "· 2 shells, 1 monitor ·", "· 1 monitor").
@@ -117,6 +128,10 @@ type BackgroundWork struct {
 	// Source is "pane", "transcript" or "pane+transcript": which evidence
 	// proved the work in flight.
 	Source string `json:"source,omitempty"`
+	// RosterAgents counts agent roster rows with an elapsed timer under the
+	// footer (ClaudeRosterAgentRows). Pane evidence only a transcript can
+	// confirm, so it never makes the item InFlight and is not serialized.
+	RosterAgents int `json:"-"`
 }
 
 // MarshalJSON keeps "step" whenever the work has steps: a workflow at 0/5
@@ -243,6 +258,56 @@ func ClaudePaneBackgroundWork(content string) []BackgroundWork {
 		items = append(items, w)
 	}
 	return items
+}
+
+// ClaudeRosterAgentRows counts the roster rows of non-main agents below the
+// footer that carry an elapsed timer. A row stays drawn after its agent
+// finished (the corpus has the frozen row of a completed agent, shaped like a
+// running one), so the count proves nothing alone: the session layer pairs it
+// with the transcript, which tells finished from running. Only the region
+// below the last footer line is read, so roster-shaped scrollback never
+// counts; workflow rows (n/m) are not agents.
+func ClaudeRosterAgentRows(content string) int {
+	lines := strings.Split(content, "\n")
+	footer := -1
+	for i := len(lines) - 1; i >= 0 && i >= len(lines)-backgroundPromptScanLines; i-- {
+		if claudeFooterLineRe.MatchString(StripANSI(lines[i])) {
+			footer = i
+			break
+		}
+	}
+	if footer < 0 {
+		return 0
+	}
+	rows := 0
+	for _, line := range lines[footer+1:] {
+		if _, ok := claudeRosterRowElapsed(line); ok {
+			rows++
+		}
+	}
+	return rows
+}
+
+// claudeRosterRowElapsed returns the elapsed timer of an agent roster row
+// ("20m15s"); ok=false for any other line, workflow rows included.
+func claudeRosterRowElapsed(line string) (string, bool) {
+	line = strings.TrimSpace(StripANSI(line))
+	if _, isWorkflow := parseClaudeWorkflowRow(line); isWorkflow {
+		return "", false
+	}
+	m := claudeRosterAgentRowRe.FindStringSubmatch(line)
+	if m == nil {
+		return "", false
+	}
+	return strings.ReplaceAll(m[1], " ", ""), true
+}
+
+// claudePaneBackgroundWork is ParseClaudeBackgroundWork plus the roster row
+// count, for the callers that cache the verdict for the session layer.
+func claudePaneBackgroundWork(content string) BackgroundWork {
+	work := ParseClaudeBackgroundWork(content)
+	work.RosterAgents = ClaudeRosterAgentRows(content)
+	return work
 }
 
 // ParseClaudeBackgroundWork returns the first in-flight background-work item

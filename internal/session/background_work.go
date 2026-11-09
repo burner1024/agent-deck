@@ -444,6 +444,17 @@ func mergeBackgroundWork(pane tmux.BackgroundWork, sc transcriptBackgroundScan, 
 		// The Waiting line outlived its work: Claude Code counted it done.
 		pane = tmux.BackgroundWork{}
 	}
+	if scOK && pane.RosterAgents > 0 && !pane.Running() {
+		// A roster row stays drawn after its agent finished, so the pane alone
+		// proves nothing. The transcript separates the two: a finished agent
+		// has its task-notification there and is no longer pending. A row beside
+		// a still-pending agent is a live sighting of that agent, which keeps
+		// the transcript hold (bgWorkPaneSeenAt) fresh while the row is drawn.
+		if tx, _ := sc.inFlight(); tx.Kind == tmux.BackgroundKindAgent {
+			tx.Source = "pane+transcript"
+			return tx, true
+		}
+	}
 	if scOK {
 		tx, at := sc.inFlight()
 		if pane.Watching() && tx.Running() && now.Sub(at) <= backgroundTranscriptHold {
