@@ -20,7 +20,8 @@ import (
 // transcript ends with {"type":"continued-in","continuedInSessionId":"<new>"}.
 // The instance stays bound to the old id, so a restart reopened the stalled
 // pre-handoff copy. followClaudeContinuedIn walks that pointer chain before
-// the resume command is built.
+// the resume command is built, and from the status probe's transcript scan
+// (followContinuedInFromScan), since the new supervisor fires no hooks.
 
 const (
 	// maxContinuedInHops bounds the chain walk; a cycle or a long chain
@@ -80,7 +81,7 @@ func (i *Instance) followClaudeContinuedIn() {
 		return
 	}
 
-	// buildClaudeResumeCommand runs without i.mu, while UpdateStatus reads
+	// Both callers run without i.mu, while UpdateStatus reads
 	// claudeSupersededIDs and ClaudeSessionID under it: take the lock for the
 	// rebind itself. The tmux and SQLite writes below stay outside it.
 	i.mu.Lock()
@@ -114,7 +115,7 @@ func (i *Instance) followClaudeContinuedIn() {
 		NewID:      cur,
 		Reason:     "transcript_continued_in",
 	})
-	sessionLog.Info("resume: followed continued-in",
+	sessionLog.Info("claude_continued_in_followed",
 		slog.String("instance_id", logging.SanitizeValue(i.ID)),
 		slog.String("old_session_id", logging.SanitizeValue(start)),
 		slog.String("claude_session_id", logging.SanitizeValue(cur)))
@@ -179,12 +180,19 @@ func (i *Instance) claudeIDSuperseded(id string) bool {
 // id: the respawned claude inherits it, and RefreshLiveSessionIDs later reads
 // it back and reverts ClaudeSessionID to the stalled predecessor. The SQLite
 // write keeps a fresh load (another process, the next CLI call, a reboot)
-// from resurrecting the old id too.
+// from resurrecting the old id too. A CLI process (`list --json`, `session
+// show`) registers no global StateDB, so it writes to the profile DB the
+// instance was loaded from: otherwise every fresh process redoes the rebind.
 func (i *Instance) publishClaudeContinuedInRebind(sessionID string, detectedAt time.Time) {
 	if i.tmuxSession != nil && i.tmuxSession.Exists() {
 		_ = i.tmuxSession.SetEnvironment("CLAUDE_SESSION_ID", sessionID)
 	}
 	db := statedb.GetGlobal()
+	if db == nil {
+		i.mu.RLock()
+		db = i.hookLagDB
+		i.mu.RUnlock()
+	}
 	if db == nil {
 		return
 	}

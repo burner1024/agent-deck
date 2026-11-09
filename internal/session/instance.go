@@ -789,16 +789,20 @@ type Instance struct {
 	// exists BECAUSE of it (the foreground turn ended); bgWorkPaneSeenAt is
 	// the last time the pane itself showed the work (the transcript-only hold
 	// counts from it). bgTranscript* cache the transcript path per Claude
-	// session id.
-	bgWork           tmux.BackgroundWork
-	bgWorkActive     bool
-	bgWorkPaneSeenAt time.Time
-	bgTranscriptSID  string
-	bgTranscriptPath string
-	bgTranscriptAt   time.Time
+	// session id. continuedInTried* bound the status path's continued-in
+	// follow to one attempt per transcript per retry interval.
+	bgWork               tmux.BackgroundWork
+	bgWorkActive         bool
+	bgWorkPaneSeenAt     time.Time
+	bgTranscriptSID      string
+	bgTranscriptPath     string
+	bgTranscriptAt       time.Time
+	continuedInTriedPath string
+	continuedInTriedAt   time.Time
 	// hookLagDB is the profile database this instance was loaded from, so a
-	// CLI process (which registers no global StateDB) can persist the record
-	// to the row it read. Nil for instances not loaded from storage.
+	// CLI process (which registers no global StateDB) can persist the record,
+	// and a continued-in rebind, to the row it read. Nil for instances not
+	// loaded from storage.
 	hookLagDB *statedb.StateDB
 
 	// Auth-hold state (see auth_hold.go). authFailureSeenAt is when a live
