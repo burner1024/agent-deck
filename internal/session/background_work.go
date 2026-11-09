@@ -141,6 +141,10 @@ type transcriptBackgroundScan struct {
 	// label a count that outlived its launch record in the tail window.
 	LastWorkflow string
 	LastAgent    string
+	// HandedOff: the last record is a continued-in handoff (#2683), so the
+	// conversation lives on in a successor transcript. Only a trigger for
+	// followClaudeContinuedIn, which re-reads and guards the chain itself.
+	HandedOff bool
 }
 
 // bgTranscriptRecord is the subset of a transcript record the scan reads.
@@ -230,6 +234,7 @@ func scanTranscriptBackground(lines []string) transcriptBackgroundScan {
 		if err := json.Unmarshal([]byte(line), &rec); err != nil || rec.IsSidechain {
 			continue
 		}
+		sc.HandedOff = rec.Type == "continued-in"
 		at, _ := time.Parse(time.RFC3339Nano, rec.Timestamp)
 		switch rec.Type {
 		case "assistant":
@@ -609,7 +614,36 @@ func transcriptBackgroundScanFor(inst *Instance) (transcriptBackgroundScan, bool
 	if err != nil {
 		return transcriptBackgroundScan{}, false
 	}
+	if sc.HandedOff && inst.followContinuedInFromScan(path) {
+		// Rebound: the dead transcript says nothing about the live turn.
+		if sc, err = turnFacts.Background(inst.backgroundTranscriptPath()); err != nil {
+			return transcriptBackgroundScan{}, false
+		}
+	}
 	return sc, true
+}
+
+// followContinuedInFromScan rebinds inst after the status scan found path
+// ending in a continued-in handoff, and reports whether the binding moved.
+// The handoff's supervisor fires no hooks, so this is the only path that
+// rebinds a session nobody restarts. The flag rides on the cached tail scan,
+// so a poll pays nothing extra; a refused follow (unowned id, foreign or
+// missing successor) is retried once per backgroundTranscriptRetry, not on
+// every poll. Called without i.mu: the chain walk reads transcripts.
+func (i *Instance) followContinuedInFromScan(path string) bool {
+	now := time.Now()
+	i.mu.Lock()
+	if i.continuedInTriedPath == path && now.Sub(i.continuedInTriedAt) < backgroundTranscriptRetry {
+		i.mu.Unlock()
+		return false
+	}
+	i.continuedInTriedPath, i.continuedInTriedAt = path, now
+	before := i.ClaudeSessionID
+	i.mu.Unlock()
+	i.followClaudeContinuedIn()
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.ClaudeSessionID != before
 }
 
 // backgroundTranscriptRetry bounds how often an unresolvable transcript path
