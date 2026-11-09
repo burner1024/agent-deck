@@ -73,7 +73,7 @@ func (s *Session) prepareFrame(content string) string {
 		s.lastBackgroundWork, s.lastBackgroundBlocked = BackgroundWork{}, false
 		return content
 	}
-	s.lastBackgroundWork = ParseClaudeBackgroundWork(content)
+	s.lastBackgroundWork = claudePaneBackgroundWork(content)
 	trimmed := trimClaudeTrailingRoster(content)
 	s.lastBackgroundBlocked = s.backgroundWorkOutrankedLocked(trimmed)
 	return trimmed
