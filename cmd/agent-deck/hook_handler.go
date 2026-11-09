@@ -510,8 +510,9 @@ func handleHookHandlerReceivedAt(receivedAt time.Time) {
 		return
 	}
 	// Issue #2683: a Claude background/supervisor worker carries the env of
-	// whichever pane first started it; never credit its hooks to that pane.
-	if !isKimiHookPayload(payload) && hookFromClaudeBackgroundWorker() {
+	// whichever pane first started it; never credit its hooks to that pane,
+	// unless that pane itself parked the job the worker runs.
+	if !isKimiHookPayload(payload) && hookFromClaudeBackgroundWorker(instanceID) {
 		bgSessionID := strings.TrimSpace(payload.SessionID)
 		if bgSessionID == "" {
 			bgSessionID = strings.TrimSpace(payload.ConversationID)

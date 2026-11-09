@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,7 +49,7 @@ func TestCLIHomeDerivedToolPathsRefuseTheRealHome(t *testing.T) {
 		name, wantKind string
 		fn             func()
 	}{
-		{"nearestClaudeAncestorKind", "Claude config dir (~/.claude)", func() { nearestClaudeAncestorKind(os.Getpid()) }},
+		{"claudeConfigDirForHook", "Claude config dir (~/.claude)", func() { claudeConfigDirForHook() }},
 		{"claudeLoggedIn default dir", "Claude root config (~/.claude.json)", func() { claudeLoggedIn("") }},
 		{"loginFacts codex", "Codex home (~/.codex)", func() { loginFacts("codex", nil) }},
 		{"loginFacts opencode", "XDG data dir (~/.local/share)", func() { loginFacts("opencode", nil) }},
