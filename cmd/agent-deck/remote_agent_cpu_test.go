@@ -35,14 +35,19 @@ func TestBuildGroupListJSON_RefreshesEachSessionOnce(t *testing.T) {
 	calls := map[*session.Instance]int{}
 	orig := groupListRefreshStatus
 	t.Cleanup(func() { groupListRefreshStatus = orig })
-	groupListRefreshStatus = func(inst *session.Instance) {
+	passes := map[*session.StatusUpdatePass]struct{}{}
+	groupListRefreshStatus = func(pass *session.StatusUpdatePass, inst *session.Instance) {
 		calls[inst]++
+		passes[pass] = struct{}{}
 		inst.Status = session.StatusRunning
 	}
 
 	out, err := buildGroupListJSON(tree)
 	if err != nil {
 		t.Fatalf("buildGroupListJSON: %v", err)
+	}
+	if _, nilPass := passes[nil]; len(passes) != 1 || nilPass {
+		t.Errorf("refreshes used %d status passes (nil among them: %v), want one shared pass", len(passes), nilPass)
 	}
 	for _, inst := range instances {
 		if got := calls[inst]; got != 1 {
@@ -224,7 +229,10 @@ func BenchmarkBuildGroupListJSON(b *testing.B) {
 	orig := groupListRefreshStatus
 	b.Cleanup(func() { groupListRefreshStatus = orig })
 	refreshes := 0
-	groupListRefreshStatus = func(inst *session.Instance) { refreshes++; inst.Status = session.StatusStopped }
+	groupListRefreshStatus = func(_ *session.StatusUpdatePass, inst *session.Instance) {
+		refreshes++
+		inst.Status = session.StatusStopped
+	}
 	b.ReportAllocs()
 	for b.Loop() {
 		if _, err := buildGroupListJSON(tree); err != nil {

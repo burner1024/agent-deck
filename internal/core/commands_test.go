@@ -366,6 +366,23 @@ func TestGroupListTreeFlatAndTotals(t *testing.T) {
 	}
 }
 
+// groupStatus counts the status the listing pass produced. Refreshing inside
+// it ran the full UpdateStatus per session and per enclosing group, whose
+// metadata sync can run the opencode CLI (seconds per call).
+func TestGroupStatusCountsWithoutRefreshing(t *testing.T) {
+	inst := session.NewInstanceWithGroup("w1", t.TempDir(), "work")
+	inst.Status = session.StatusWaiting
+	tree := session.NewGroupTreeWithGroups([]*session.Instance{inst}, nil)
+
+	got := groupStatus(tree, "work")
+	if want := (GroupStatus{Waiting: 1}); got != want {
+		t.Fatalf("groupStatus = %+v, want %+v", got, want)
+	}
+	if inst.Status != session.StatusWaiting {
+		t.Fatalf("instance status = %q after counting, want it untouched (waiting)", inst.Status)
+	}
+}
+
 func TestDrainGroupQueueWithNothingQueued(t *testing.T) {
 	inst := session.NewInstanceWithGroup("a", t.TempDir(), "g")
 	inst.Status = session.StatusStopped

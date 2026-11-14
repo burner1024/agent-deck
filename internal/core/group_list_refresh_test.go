@@ -24,12 +24,17 @@ func TestGroupListRefreshesEachSessionOnce(t *testing.T) {
 	calls := map[*session.Instance]int{}
 	orig := groupListRefreshStatus
 	t.Cleanup(func() { groupListRefreshStatus = orig })
-	groupListRefreshStatus = func(inst *session.Instance) {
+	passes := map[*session.StatusUpdatePass]struct{}{}
+	groupListRefreshStatus = func(pass *session.StatusUpdatePass, inst *session.Instance) {
 		calls[inst]++
+		passes[pass] = struct{}{}
 		inst.Status = session.StatusWaiting
 	}
 
 	out := groupListFromTree(tree)
+	if _, nilPass := passes[nil]; len(passes) != 1 || nilPass {
+		t.Errorf("refreshes used %d status passes (nil among them: %v), want one shared pass", len(passes), nilPass)
+	}
 	for _, inst := range instances {
 		if got := calls[inst]; got != 1 {
 			t.Errorf("session %q (group %q) refreshed %d times, want 1", inst.Title, inst.GroupPath, got)

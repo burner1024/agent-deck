@@ -121,8 +121,13 @@ func printGroupHelp() {
 }
 
 // groupListRefreshStatus refreshes one session's status for the group
-// listings; a variable so tests can count the refreshes.
-var groupListRefreshStatus = func(inst *session.Instance) { _ = inst.UpdateStatus() }
+// listings; a variable so tests can count the refreshes. UpdateStatusOnly, not
+// UpdateStatus: a listing only reads statuses, and UpdateStatus's metadata
+// sync can run the opencode CLI for every live OpenCode session (seconds each,
+// on every `group list` and every remote-agent change probe).
+var groupListRefreshStatus = func(pass *session.StatusUpdatePass, inst *session.Instance) {
+	_ = pass.UpdateStatusOnly(inst)
+}
 
 // refreshGroupTreeStatuses refreshes every session in the tree once. The
 // group listings count each group's whole subtree, so a session is counted
@@ -130,14 +135,17 @@ var groupListRefreshStatus = func(inst *session.Instance) { _ = inst.UpdateStatu
 // per level (three for deck/ashesh/archive) on every `group list` and on
 // every remote-agent change probe.
 // GroupList is walked first for a stable order; Groups (what the counts
-// read) catches any group GroupList lacks.
+// read) catches any group GroupList lacks. One StatusUpdatePass serves the
+// whole sweep, so sessions on one tmux socket share its session listing and
+// process snapshot.
 func refreshGroupTreeStatuses(groupTree *session.GroupTree) {
+	var pass session.StatusUpdatePass
 	seen := make(map[*session.Instance]struct{})
 	refresh := func(g *session.Group) {
 		for _, sess := range g.Sessions {
 			if _, ok := seen[sess]; !ok {
 				seen[sess] = struct{}{}
-				groupListRefreshStatus(sess)
+				groupListRefreshStatus(&pass, sess)
 			}
 		}
 	}
@@ -177,7 +185,8 @@ func buildGroupListJSON(groupTree *session.GroupTree) ([]byte, error) {
 
 	// Build hierarchical structure (with recursive session counts - Issue #48)
 	buildGroupJSON := func(g *session.Group) groupJSON {
-		// Count status recursively for this group and all subgroups
+		// Count status recursively for this group and all subgroups, as the
+		// caller's status pass left it.
 		status := groupStatusJSON{}
 		for path, subGroup := range groupTree.Groups {
 			if path == g.Path || strings.HasPrefix(path, g.Path+"/") {
