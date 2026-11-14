@@ -88,11 +88,15 @@ type InstanceData struct {
 	LastActivityAt time.Time `json:"last_activity_at,omitempty"`
 	// HookLag mirrors Instance.hookLag (status-light audit defect B): the
 	// persisted completed-turn samples, extras zone (see hook_lag.go).
-	HookLag      hookLagRecord `json:"hook_lag,omitempty"`
-	ArchivedAt   time.Time     `json:"archived_at,omitempty"`
-	SupersededBy string        `json:"superseded_by,omitempty"`
-	Supersedes   string        `json:"supersedes,omitempty"`
-	TmuxSession  string        `json:"tmux_session"`
+	HookLag hookLagRecord `json:"hook_lag,omitempty"`
+	// AcknowledgedHookTS and AcknowledgedOpenCode mirror Instance.ackedHookTS
+	// and ackedOpenCodeUpdated, extras zone (see attach_ack.go).
+	AcknowledgedHookTS   int64     `json:"acknowledged_hook_ts,omitempty"`
+	AcknowledgedOpenCode int64     `json:"acknowledged_opencode_updated,omitempty"`
+	ArchivedAt           time.Time `json:"archived_at,omitempty"`
+	SupersededBy         string    `json:"superseded_by,omitempty"`
+	Supersedes           string    `json:"supersedes,omitempty"`
+	TmuxSession          string    `json:"tmux_session"`
 	// TmuxSocketName is the tmux -L selector captured at Instance creation
 	// (issue #687, v1.7.50). Empty for pre-v1.7.50 rows — those keep hitting
 	// the default server after upgrade.
@@ -1410,6 +1414,8 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			GenericSessionLocation:    genericScopeLocation(r.ToolData),
 			LastActivityAt:            ReadLastActivityAtFromToolData(r.ToolData),
 			HookLag:                   ReadHookLagFromToolData(r.ToolData),
+			AcknowledgedHookTS:        ReadAcknowledgedHookFromToolData(r.ToolData),
+			AcknowledgedOpenCode:      ReadAcknowledgedOpenCodeFromToolData(r.ToolData),
 			DeepSeekTask:              ReadDeepSeekTaskFromToolData(r.ToolData),
 			HermesSessionID:           ReadHermesSessionIDFromToolData(r.ToolData),
 			HermesDetectedAt:          ReadHermesDetectedAtFromToolData(r.ToolData),
@@ -1558,6 +1564,8 @@ func (s *Storage) LoadWithGroupsSnapshot() ([]*Instance, []*GroupData, *statedb.
 			GenericSessionLocation:    genericScopeLocation(r.ToolData),
 			LastActivityAt:            ReadLastActivityAtFromToolData(r.ToolData),
 			HookLag:                   ReadHookLagFromToolData(r.ToolData),
+			AcknowledgedHookTS:        ReadAcknowledgedHookFromToolData(r.ToolData),
+			AcknowledgedOpenCode:      ReadAcknowledgedOpenCodeFromToolData(r.ToolData),
 			DeepSeekTask:              ReadDeepSeekTaskFromToolData(r.ToolData),
 			HermesSessionID:           ReadHermesSessionIDFromToolData(r.ToolData),
 			HermesDetectedAt:          ReadHermesDetectedAtFromToolData(r.ToolData),
@@ -1910,6 +1918,8 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 			lastActivityPersisted: instData.LastActivityAt,
 			hookLag:               instData.HookLag,
 			hookLagPersisted:      instData.HookLag,
+			ackedHookTS:           instData.AcknowledgedHookTS,
+			ackedOpenCodeUpdated:  instData.AcknowledgedOpenCode,
 			hookLagDB:             s.db,
 			Sandbox:               instData.Sandbox,
 			SandboxContainer:      instData.SandboxContainer,
