@@ -444,9 +444,8 @@ func TestGroupListTreeFlatAndTotals(t *testing.T) {
 func TestGroupStatusCountsWithoutRefreshing(t *testing.T) {
 	inst := session.NewInstanceWithGroup("w1", t.TempDir(), "work")
 	inst.Status = session.StatusWaiting
-	tree := session.NewGroupTreeWithGroups([]*session.Instance{inst}, nil)
 
-	got := groupStatus(tree, "work")
+	got := groupStatus([]*session.Instance{inst})
 	if want := (GroupStatus{Waiting: 1}); got != want {
 		t.Fatalf("groupStatus = %+v, want %+v", got, want)
 	}
