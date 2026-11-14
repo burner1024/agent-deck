@@ -386,38 +386,47 @@ func backgroundLaunch(rec bgTranscriptRecord, uses map[string]bgToolUse, at time
 // evidence (launch record or the turn_duration that counted it).
 func (sc transcriptBackgroundScan) inFlight() (tmux.BackgroundWork, time.Time) {
 	for _, kind := range []string{tmux.BackgroundKindWorkflow, tmux.BackgroundKindAgent, tmux.BackgroundKindBash, tmux.BackgroundKindMonitor, tmux.BackgroundKindWatcher} {
-		var newest *transcriptBackgroundTask
-		for idx := range sc.Pending {
-			if sc.Pending[idx].Kind == kind {
-				newest = &sc.Pending[idx]
-			}
+		if work, at, ok := sc.inFlightOf(kind); ok {
+			return work, at
 		}
-		count, last := 0, ""
-		switch kind {
-		case tmux.BackgroundKindWorkflow:
-			count, last = sc.TurnWorkflows, sc.LastWorkflow
-		case tmux.BackgroundKindAgent:
-			count, last = sc.TurnAgents, sc.LastAgent
-		}
-		if newest == nil && count == 0 {
-			continue
-		}
-		work := tmux.BackgroundWork{Kind: kind, Source: "transcript"}
-		if work.Watching() {
-			work.Count = sc.passiveCount()
-		}
-		var at time.Time
-		if newest != nil {
-			work.Task, at = newest.Name, newest.At
-		} else {
-			work.Task = last
-		}
-		if count > 0 && sc.TurnAt.After(at) {
-			at = sc.TurnAt
-		}
-		return work, at
 	}
 	return tmux.BackgroundWork{}, time.Time{}
+}
+
+// inFlightOf is inFlight for one kind, whatever else is pending: evidence for
+// one kind (a roster row is an agent) must not be judged by the item that
+// wins display precedence.
+func (sc transcriptBackgroundScan) inFlightOf(kind string) (tmux.BackgroundWork, time.Time, bool) {
+	var newest *transcriptBackgroundTask
+	for idx := range sc.Pending {
+		if sc.Pending[idx].Kind == kind {
+			newest = &sc.Pending[idx]
+		}
+	}
+	count, last := 0, ""
+	switch kind {
+	case tmux.BackgroundKindWorkflow:
+		count, last = sc.TurnWorkflows, sc.LastWorkflow
+	case tmux.BackgroundKindAgent:
+		count, last = sc.TurnAgents, sc.LastAgent
+	}
+	if newest == nil && count == 0 {
+		return tmux.BackgroundWork{}, time.Time{}, false
+	}
+	work := tmux.BackgroundWork{Kind: kind, Source: "transcript"}
+	if work.Watching() {
+		work.Count = sc.passiveCount()
+	}
+	var at time.Time
+	if newest != nil {
+		work.Task, at = newest.Name, newest.At
+	} else {
+		work.Task = last
+	}
+	if count > 0 && sc.TurnAt.After(at) {
+		at = sc.TurnAt
+	}
+	return work, at, true
 }
 
 // mergeBackgroundWork applies the merge rule (see the file comment). pane is
@@ -442,7 +451,8 @@ func mergeBackgroundWork(pane tmux.BackgroundWork, sc transcriptBackgroundScan, 
 	}
 	if pane.InFlight() && scOK && pane.Steps == 0 && sc.awaitedLineStale(pane.Kind) {
 		// The Waiting line outlived its work: Claude Code counted it done.
-		pane = tmux.BackgroundWork{}
+		// The roster rows are separate evidence and are judged below.
+		pane = tmux.BackgroundWork{RosterAgents: pane.RosterAgents}
 	}
 	if scOK && pane.RosterAgents > 0 && !pane.Running() {
 		// A roster row stays drawn after its agent finished, so the pane alone
@@ -450,7 +460,7 @@ func mergeBackgroundWork(pane tmux.BackgroundWork, sc transcriptBackgroundScan, 
 		// has its task-notification there and is no longer pending. A row beside
 		// a still-pending agent is a live sighting of that agent, which keeps
 		// the transcript hold (bgWorkPaneSeenAt) fresh while the row is drawn.
-		if tx, _ := sc.inFlight(); tx.Kind == tmux.BackgroundKindAgent {
+		if tx, _, ok := sc.inFlightOf(tmux.BackgroundKindAgent); ok {
 			tx.Source = "pane+transcript"
 			return tx, true
 		}

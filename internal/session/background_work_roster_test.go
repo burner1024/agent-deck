@@ -29,6 +29,16 @@ func TestMergeBackgroundWork_RosterRow(t *testing.T) {
 	// Its terminal task-notification is in the transcript: the row only lingers.
 	finished := scanTranscriptBackground(lines)
 	row := tmux.BackgroundWork{RosterAgents: 1}
+	// A workflow pending beside the agent wins display precedence; it must not
+	// hide the agent the row belongs to.
+	mixed := pending
+	mixed.Pending = append(append([]transcriptBackgroundTask(nil), pending.Pending...),
+		transcriptBackgroundTask{ID: "wf-1", Kind: tmux.BackgroundKindWorkflow, Name: "nightly sweep", At: now.Add(-time.Hour)})
+	// The pane still draws a Waiting line for a workflow the transcript counts
+	// done; dropping that stale line must keep the roster row beside it.
+	workflowDone := pending
+	workflowDone.TurnWorkflows, workflowDone.TurnWorkflowsKnown = 0, true
+	staleLineAndRow := tmux.BackgroundWork{Kind: tmux.BackgroundKindWorkflow, Count: 1, RosterAgents: 1}
 
 	cases := []struct {
 		name     string
@@ -39,6 +49,8 @@ func TestMergeBackgroundWork_RosterRow(t *testing.T) {
 		wantPane bool
 	}{
 		{"row, agent pending", row, pending, true, tmux.BackgroundKindAgent, true},
+		{"row, agent and workflow pending", row, mixed, true, tmux.BackgroundKindAgent, true},
+		{"row beside a stale workflow line, agent pending", staleLineAndRow, workflowDone, true, tmux.BackgroundKindAgent, true},
 		{"row, agent finished", row, finished, true, "", false},
 		{"row, no transcript", row, transcriptBackgroundScan{}, false, "", false},
 		{"no row, agent pending past the hold", tmux.BackgroundWork{}, pending, true, "", false},
