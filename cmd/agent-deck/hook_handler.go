@@ -399,6 +399,13 @@ func handleHookHandlerReceivedAt(receivedAt time.Time) {
 		return
 	}
 	instanceID = ownerID
+	if ownerProfile != "" {
+		// The worker's env names the profile of the pane that started it; every
+		// later lookup in this process (status, bindings, inbox) is the owner's.
+		if err := os.Setenv("AGENTDECK_PROFILE", ownerProfile); err != nil {
+			return
+		}
+	}
 	// Agent activity tracing (ASK-129): one redacted spool line, no SQLite,
 	// errors ignored; a no-op unless [trace] level / AGENTDECK_TRACE is on.
 	// Before the PreToolUse sync gate: tracing records every tool edge it is

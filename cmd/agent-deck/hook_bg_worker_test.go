@@ -196,6 +196,13 @@ func TestHookHandler_BgWorkerOfJobParkedByThisPane(t *testing.T) {
 			if got, want := lifecycleLogHasBgReject(t), tc.owner == ""; got != want {
 				t.Fatalf("bg-worker reject logged = %v, want %v", got, want)
 			}
+			// The rest of the hook (bindings, inbox, ledger) resolves the
+			// owner's profile, not the one the worker inherited.
+			if tc.profile != "" {
+				if got := os.Getenv("AGENTDECK_PROFILE"); got != tc.profile {
+					t.Fatalf("AGENTDECK_PROFILE after routing = %q, want %q", got, tc.profile)
+				}
+			}
 		})
 	}
 }
