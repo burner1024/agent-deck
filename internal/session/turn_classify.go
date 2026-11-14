@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -443,7 +444,15 @@ type turnFactsCacheEntry struct {
 	facts TurnFacts
 	err   error
 	bg    transcriptBackgroundScan
+	// widened: facts came from (or were tried with) the wider re-read.
+	widened bool
 }
+
+// turnTriggerScanMaxBytes bounds the re-read for a finished turn whose opening
+// prompt lies beyond the default tail window (a long tool loop). The default
+// window serves the per-poll background scan; only a turn the window left
+// unclassified pays for the wider read, once per transcript change.
+const turnTriggerScanMaxBytes = int64(8 << 20)
 
 var turnFacts = &turnFactsCache{entries: map[string]turnFactsCacheEntry{}}
 
@@ -488,6 +497,9 @@ func (c *turnFactsCache) Facts(path string) (TurnFacts, error) {
 	if err != nil {
 		return TurnFacts{}, err
 	}
+	if entry.err == nil && entry.facts.Trigger == TurnTriggerUnknown && !entry.widened {
+		entry = c.widen(path, entry)
+	}
 	if entry.err == nil && entry.facts.Pending {
 		// A reply that never flushes (interrupted turn, a prompt with no
 		// assistant text) must not park the child: past the flush-race window
@@ -499,6 +511,35 @@ func (c *turnFactsCache) Facts(path string) (TurnFacts, error) {
 		return TurnFacts{Trigger: TurnTriggerUnknown}, nil
 	}
 	return entry.facts, entry.err
+}
+
+// widen re-classifies a finished turn whose opening prompt the default tail
+// window missed: a send-triggered turn classified unknown loses its reply
+// target. The byte window doubles up to turnTriggerScanMaxBytes. A failed or
+// fruitless re-read keeps the unknown facts, which is the classification the
+// default window gave. The result is cached only while the file is unchanged.
+func (c *turnFactsCache) widen(path string, entry turnFactsCacheEntry) turnFactsCacheEntry {
+	entry.widened = true
+	for window := int64(2 << 20); ; window *= 2 {
+		window = min(window, turnTriggerScanMaxBytes)
+		lines, err := transcriptTailLinesWithin(path, math.MaxInt, window)
+		if err != nil {
+			break
+		}
+		if facts := classifyTranscriptTail(lines); facts.Trigger != TurnTriggerUnknown && !facts.Pending {
+			entry.facts = facts
+			break
+		}
+		if window >= entry.size || window == turnTriggerScanMaxBytes {
+			break
+		}
+	}
+	c.mu.Lock()
+	if cur, ok := c.entries[path]; ok && cur.size == entry.size && cur.mtime.Equal(entry.mtime) {
+		c.entries[path] = entry
+	}
+	c.mu.Unlock()
+	return entry
 }
 
 // Background returns the background-work scan of the transcript at path
