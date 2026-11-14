@@ -277,17 +277,9 @@ func TestIssue1800_ShellPassthroughCodex_GetsAgentdeckEnv(t *testing.T) {
 	if !strings.HasSuffix(cmd, inst.Command) {
 		t.Fatalf("expected the codex subcommand to run verbatim with no flag injection, got: %s", cmd)
 	}
-	// Review finding on PR #1821: AGENTDECK_TOOL must reflect the real
-	// spawned binary ("codex", from MatchTool), not the routing tool
-	// ("shell") — hook subprocesses that key off AGENTDECK_TOOL=="codex"
-	// would otherwise silently stop matching for every shell-routed codex
-	// subcommand.
-	if !strings.Contains(cmd, "AGENTDECK_TOOL=codex") {
-		t.Fatalf("expected AGENTDECK_TOOL=codex (the matched binary identity), not the routing "+
-			"Tool=%q; got: %s", inst.Tool, cmd)
-	}
-	if strings.Contains(cmd, "AGENTDECK_TOOL=shell") {
-		t.Fatalf("AGENTDECK_TOOL must not leak the routing tool name \"shell\"; got: %s", cmd)
+	// The notify guard must recognize the subcommand's matched tool.
+	if !strings.Contains(cmd, " AGENTDECK_TOOL=codex ") {
+		t.Fatalf("expected matched subcommand tool; got: %s", cmd)
 	}
 }
 

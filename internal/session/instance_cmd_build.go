@@ -273,8 +273,8 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 }
 
 // buildBashExportPrefix builds the export prefix used in bash -c commands.
-// Always exports AGENTDECK_INSTANCE_ID. CLAUDE_CONFIG_DIR is exported only
-// when the user has an explicit config_dir resolved for this instance AND
+// Always exports AGENTDECK_INSTANCE_ID and the owning tool.
+// CLAUDE_CONFIG_DIR is exported only when an explicit config_dir is resolved AND
 // skipConfigDirForCustomCommand is false; when that gate is open, a
 // prepared WorkerScratchConfigDir overrides the resolved value — same
 // priority as buildClaudeCommandWithMessage and buildClaudeResumeCommand.
@@ -292,6 +292,9 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 // in both cases there is no alias downstream to defer to.
 func (i *Instance) buildBashExportPrefix(skipConfigDirForCustomCommand bool) string {
 	prefix := fmt.Sprintf("export AGENTDECK_INSTANCE_ID=%s; export AGENTDECK_PROFILE=%s; ", shellescape.Quote(i.ID), shellescape.Quote(sessionProfileEnvValue()))
+	if toolExport := i.toolEnvExport(); toolExport != "" {
+		prefix += toolExport + "; "
+	}
 	i.configDirLeftToCommand = skipConfigDirForCustomCommand
 	if IsClaudeConfigDirExplicitForInstance(i) && !skipConfigDirForCustomCommand {
 		// Issue #922 (reporter @bautrey): see applyWorkerScratchOverride.
@@ -396,8 +399,8 @@ func resolvedProcessProfile() string {
 // could not tell which session it was in, and the identity block never
 // reached it. These pairs give it the same environment; the identity file is
 // written by the agent-deck that spawns the pane, so on a remote it is the
-// remote's own. A shell session running a custom command gets its account
-// only: its environment otherwise comes from its own command line. A wrapper
+// remote's own. A shell session running a custom command gets its tool and
+// account: its other values come from its command line. A wrapper
 // (`--wrapper`, or the tool's) owns the pane and already carries the account
 // export inside its `bash -c` (prepareCommand), so it gets nothing here.
 func (i *Instance) interactiveShellEnv() []string {
@@ -405,12 +408,11 @@ func (i *Instance) interactiveShellEnv() []string {
 		return nil
 	}
 	plainShell := strings.TrimSpace(i.Command) == ""
-	var env []string
+	env := []string{"AGENTDECK_TOOL=" + i.Tool}
 	if plainShell {
 		env = append(env,
 			"AGENTDECK_INSTANCE_ID="+i.ID,
 			"AGENTDECK_PROFILE="+sessionProfileEnvValue(),
-			"AGENTDECK_TOOL="+i.Tool,
 			"AGENTDECK_TITLE="+identityOneLine(i.Title))
 	}
 	if i.Account != "" {
@@ -424,7 +426,8 @@ func (i *Instance) interactiveShellEnv() []string {
 	return env
 }
 
-// setInteractiveShellLaunchEnv hands interactiveShellEnv to tmux so the
+// setInteractiveShellLaunchEnv stamps every local pane's owning tool and
+// hands interactiveShellEnv to tmux so the
 // pane's shell is born with it (new-session -e) and nothing is typed into
 // the pane (#2817: every new shell visibly ran a long ` export AGENTDECK_*`
 // line). It must run right before each tmuxSession.Start, after
@@ -437,6 +440,9 @@ func (i *Instance) setInteractiveShellLaunchEnv() {
 	i.tmuxSession.LaunchEnv = nil
 	if i.shellEnvAtLaunch() {
 		i.tmuxSession.LaunchEnv = i.interactiveShellEnv()
+		if len(i.tmuxSession.LaunchEnv) == 0 {
+			i.tmuxSession.LaunchEnv = []string{"AGENTDECK_TOOL=" + i.Tool}
+		}
 	}
 }
 

@@ -4930,7 +4930,7 @@ func TestPrepareCommand_AppliesWrapperBeforeBashWrap(t *testing.T) {
 		t.Fatalf("prepareCommand returned error: %v", err)
 	}
 
-	want := `bash -c 'tool --extra1 --extra2'`
+	want := `bash -c 'export AGENTDECK_TOOL=claude; tool --extra1 --extra2'`
 	if got != want {
 		t.Fatalf("prepareCommand output shape wrong.\n  got:  %q\n  want: %q", got, want)
 	}
@@ -4955,14 +4955,13 @@ func TestPrepareCommand_WrapperWithSingleQuoteInCmd_QuotesSafely(t *testing.T) {
 		t.Fatalf("prepareCommand returned error: %v", err)
 	}
 
-	want := `bash -c 'echo it'"'"'s-fine --trailing'`
+	want := `bash -c 'export AGENTDECK_TOOL=claude; echo it'"'"'s-fine --trailing'`
 	if got != want {
 		t.Fatalf("quoting escape wrong.\n  got:  %q\n  want: %q", got, want)
 	}
 }
 
-// TestPrepareCommand_NoWrapper_Unchanged guards against the reorder breaking
-// the no-wrapper path: prepareCommand must still return cmd unchanged.
+// A plain shell command keeps the syntax of its interactive shell.
 func TestPrepareCommand_NoWrapper_Unchanged(t *testing.T) {
 	inst := NewInstance("issue-601-nowrap", "/tmp")
 	inst.Tool = "shell"
@@ -4972,8 +4971,8 @@ func TestPrepareCommand_NoWrapper_Unchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareCommand returned error: %v", err)
 	}
-	if got != "echo hi" {
-		t.Fatalf("no-wrapper path should pass cmd through unchanged.\n  got:  %q\n  want: %q", got, "echo hi")
+	if want := "echo hi"; got != want {
+		t.Fatalf("raw command = %q, want %q", got, want)
 	}
 }
 
@@ -4992,7 +4991,7 @@ func TestPrepareCommand_Issue601_ReporterRepro(t *testing.T) {
 		t.Fatalf("prepareCommand returned error: %v", err)
 	}
 
-	if !strings.Contains(got, `'my-claude-wrapper --session-id aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --dangerously-skip-permissions'`) {
+	if !strings.Contains(got, `; my-claude-wrapper --session-id aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --dangerously-skip-permissions'`) {
 		t.Fatalf("issue #601 repro: flags not inside bash -c single-quoted payload.\n  got: %q", got)
 	}
 	if strings.Contains(got, `'my-claude-wrapper' --session-id`) {

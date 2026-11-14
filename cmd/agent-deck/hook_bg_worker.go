@@ -105,18 +105,25 @@ func parentPIDOf(pid int) int {
 // logBgWorkerHookDropOnce records one session-id lifecycle reject per
 // (instance, worker session), so a busy worker does not flood the log.
 func logBgWorkerHookDropOnce(instanceID, sessionID, event string) {
+	logHookDropOnce(instanceID, sessionID, event, "claude", "bg-worker-dropped", "hook_from_background_worker")
+}
+
+// logHookDropOnce records one session-id lifecycle reject per (instance,
+// foreign session) for a hook dropped for reason; marker names the per-instance
+// file in the hooks dir that remembers the last logged session.
+func logHookDropOnce(instanceID, sessionID, event, tool, marker, reason string) {
 	hooksDir := getHooksDir()
-	markerPath := filepath.Join(hooksDir, filepath.Base(instanceID)+".bg-worker-dropped")
+	markerPath := filepath.Join(hooksDir, filepath.Base(instanceID)+"."+marker)
 	if existing, err := os.ReadFile(markerPath); err == nil && strings.TrimSpace(string(existing)) == sessionID {
 		return
 	}
 	_ = session.WriteSessionIDLifecycleEvent(session.SessionIDLifecycleEvent{
 		InstanceID: instanceID,
-		Tool:       "claude",
+		Tool:       tool,
 		Action:     "reject",
 		Source:     "hook_payload",
 		Candidate:  sessionID,
-		Reason:     "hook_from_background_worker",
+		Reason:     reason,
 		HookEvent:  event,
 	})
 	if err := os.MkdirAll(hooksDir, 0o700); err == nil {

@@ -221,6 +221,14 @@ func handleCodexNotify() {
 	if sessionID == "" {
 		sessionID = strings.TrimSpace(os.Getenv("CODEX_SESSION_ID"))
 	}
+	// A `codex exec` worker spawned from a non-Codex session's shell inherits
+	// that pane's AGENTDECK_INSTANCE_ID, and ~/.codex/config.toml fires this
+	// notify for it: its turn end is not the owner's, and would overwrite the
+	// owner's hook status and session id.
+	if tool := codexNotifyInstanceTool(instanceID); tool != "" && !session.IsCodexCompatible(tool) {
+		logCodexNotifyDropped("foreign_instance_tool", instanceID, sessionID, turnID, event, codexNotifyHome())
+		return
+	}
 	// Codex's thread-title helper fires the same turn-end notify under its own
 	// thread id, often while the main turn still runs. It never writes a
 	// rollout, so its event must not replace the anchor or the main thread's
@@ -245,6 +253,30 @@ func handleCodexNotify() {
 	writeCodexHookStatusDone(instanceID, status, sessionID, event, turnID, codexNotifyDoneSignal(event, data))
 	spoolCommsFromCodexNotify(instanceID, sessionID, turnID, event, data)
 	spoolTraceFromCodexNotify(instanceID, event, sessionID, turnID)
+}
+
+// codexNotifyInstanceTool is the tool of the instance a notify fired under, or
+// "" when it cannot be told. Managed launches stamp their owning tool in
+// AGENTDECK_TOOL, so it is trusted when set: no I/O. When
+// unset, one read-only state.db lookup by id (profile from AGENTDECK_PROFILE)
+// answers for panes started by older builds that lack the variable.
+// Fail-open: a missing row or unreadable db returns "" and the
+// caller keeps the historical behaviour, since a wrongly dropped Codex turn
+// end is worse than the leak it guards against.
+func codexNotifyInstanceTool(instanceID string) string {
+	if tool := strings.TrimSpace(os.Getenv("AGENTDECK_TOOL")); tool != "" {
+		return tool
+	}
+	storage, err := session.NewLiveReadOnlyStorageWithProfile("")
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = storage.Close() }()
+	row, err := storage.GetDB().LoadInstanceByID(instanceID)
+	if err != nil || row == nil {
+		return ""
+	}
+	return row.Tool
 }
 
 // logCodexNotifyDropped records why a notify payload never reached the hook

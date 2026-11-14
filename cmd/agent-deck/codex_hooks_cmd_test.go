@@ -100,6 +100,102 @@ func TestHandleCodexNotify_WritesStatus(t *testing.T) {
 	}
 }
 
+// runCodexNotifyAsChildOf fires one agent-turn-complete notify as a child of an
+// agent-deck instance and returns the hooks dir plus the instance id.
+// savedTool is the tool stored in the state db ("" = no row for the id);
+// envTool is the owning pane's stamp (empty for older builds).
+func runCodexNotifyAsChildOf(t *testing.T, savedTool, envTool string) (hooksDir, instanceID string) {
+	t.Helper()
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	session.ClearUserConfigCache()
+	t.Cleanup(session.ClearUserConfigCache)
+	t.Setenv("CODEX_SESSION_ID", "")
+	t.Setenv("AGENTDECK_PROFILE", "notify_foreign")
+	if envTool == "" {
+		t.Setenv("AGENTDECK_TOOL", "")
+		_ = os.Unsetenv("AGENTDECK_TOOL")
+	} else {
+		t.Setenv("AGENTDECK_TOOL", envTool)
+	}
+
+	instanceID = "inst-no-row"
+	if savedTool != "" {
+		inst := session.NewInstanceWithGroupAndTool("notify-owner", tmpHome, "g", savedTool)
+		storage, err := session.NewStorageWithProfile("notify_foreign")
+		if err != nil {
+			t.Fatalf("NewStorageWithProfile: %v", err)
+		}
+		t.Cleanup(func() { _ = storage.Close() })
+		if err := storage.SaveWithGroups([]*session.Instance{inst}, session.NewGroupTreeWithGroups([]*session.Instance{inst}, nil)); err != nil {
+			t.Fatalf("SaveWithGroups: %v", err)
+		}
+		instanceID = inst.ID
+	}
+	t.Setenv("AGENTDECK_INSTANCE_ID", instanceID)
+	seedCodexNotifyRollout(t, tmpHome, "worker-thread-1")
+
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+	os.Args = []string{"agent-deck", "codex-notify"}
+
+	origStdin := os.Stdin
+	defer func() { os.Stdin = origStdin }()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	_, _ = w.WriteString(`{"type":"agent-turn-complete","session_id":"worker-thread-1"}`)
+	_ = w.Close()
+	os.Stdin = r
+
+	handleCodexNotify()
+	return getHooksDir(), instanceID
+}
+
+func TestHandleCodexNotify_ForeignInstanceToolWritesNothing(t *testing.T) {
+	cases := []struct{ name, savedTool, envTool string }{
+		// The observed leak: a `codex exec` worker in a Claude pane inherits
+		// only AGENTDECK_INSTANCE_ID and AGENTDECK_PROFILE.
+		{"claude_env_unset", "claude", ""},
+		{"gemini_env_unset", "gemini", ""},
+		{"opencode_env_unset", "opencode", ""},
+		{"pi_env_unset", "pi", ""},
+		{"claude_stamp_overrides_codex", "claude", "claude"},
+		{"env_claude_no_row", "", "claude"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AGENTDECK_TOOL", "codex")
+			dir, id := runCodexNotifyAsChildOf(t, tc.savedTool, tc.envTool)
+			for _, name := range []string{id + ".json", id + ".events.jsonl"} {
+				if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+					t.Fatalf("%s exists (stat err = %v), want no write into a non-codex instance", name, err)
+				}
+			}
+		})
+	}
+}
+
+func TestHandleCodexNotify_CodexOrUndeterminableInstanceStillWrites(t *testing.T) {
+	cases := []struct{ name, savedTool, envTool string }{
+		{"codex_env_unset", "codex", ""},
+		{"codex_stamp_overrides_claude", "codex", "codex"},
+		{"env_codex_no_row", "", "codex"},
+		// Tool undeterminable (no env, no row): fail open, historical behaviour.
+		{"no_env_no_row", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AGENTDECK_TOOL", "claude")
+			dir, id := runCodexNotifyAsChildOf(t, tc.savedTool, tc.envTool)
+			if _, err := os.Stat(filepath.Join(dir, id+".json")); err != nil {
+				t.Fatalf("hook file missing: %v", err)
+			}
+		})
+	}
+}
+
 func TestHandleCodexNotify_ArgPayload(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
