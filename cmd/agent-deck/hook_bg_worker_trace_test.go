@@ -1,9 +1,71 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestTraceHook_BgWorkerRouting(t *testing.T) {
+	for _, tc := range []struct {
+		name, pane, owner, profile string
+	}{
+		{name: "same pane", pane: "pane-a", owner: "inst-pane-a", profile: "starter"},
+		{name: "another pane", pane: "pane-b", owner: "inst-pane-b", profile: "starter"},
+		{name: "another profile", pane: "pane-b", owner: "inst-pane-b", profile: "parking"},
+		{name: "unowned pane", pane: "unowned"},
+		{name: "not parked"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := setupBgWorkerTraceEnv(t)
+			t.Setenv("AGENTDECK_PROFILE", "starter")
+			seedParkedHookInstance(t, "starter", "inst-pane-a", "pane-a")
+			profile := tc.profile
+			if profile == "" {
+				profile = "starter"
+			}
+			seedParkedHookInstance(t, profile, "inst-pane-b", "pane-b")
+			claudeDir := filepath.Join(home, ".claude")
+			if tc.pane != "" {
+				writeClaudeSessionFile(t, claudeDir, 1, map[string]any{
+					"kind": "interactive", "parkedJobId": "job", "tmux": tc.pane + ":@1.%1",
+				})
+			}
+			env := []string{"AGENTDECK_PROFILE=starter", "AGENTDECK_INSTANCE_ID=inst-pane-a",
+				"AGENTDECK_TOOL=claude", "AGENTDECK_TRACE=summaries",
+				"CLAUDE_CONFIG_DIR=" + claudeDir, "CLAUDE_JOB_DIR=" + filepath.Join(claudeDir, "jobs", "job")}
+			payload := `{"hook_event_name":"PostToolUse","session_id":"` + bgWorkerTestSession + `"}`
+			_, stderr, code := runAgentDeckEnv(t, home, payload, env, "trace", "hook")
+			if code != 0 || stderr != "" {
+				t.Fatalf("trace hook exit %d: %s", code, stderr)
+			}
+			files := traceFiles(t, home)
+			if tc.owner == "" {
+				if len(files) != 0 {
+					t.Fatalf("unowned hook wrote trace files: %v", files)
+				}
+				return
+			}
+			if len(files) != 1 {
+				t.Fatalf("want one trace spool, got %v", files)
+			}
+			data, err := os.ReadFile(files[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			for key, value := range map[string]string{"instance": tc.owner, "profile": tc.profile} {
+				if !strings.Contains(string(data), fmt.Sprintf(`%q:%q`, key, value)) {
+					t.Errorf("trace missing %s=%s: %s", key, value, data)
+				}
+			}
+			if !strings.Contains(files[0], string(filepath.Separator)+tc.profile+string(filepath.Separator)) {
+				t.Errorf("trace spool stored outside owner profile: %s", files[0])
+			}
+		})
+	}
+}
 
 // Tracing (ASK-129) meets the background-worker drop (#2683): a hook from a
 // Claude background worker carries the pane's AGENTDECK_INSTANCE_ID but does
