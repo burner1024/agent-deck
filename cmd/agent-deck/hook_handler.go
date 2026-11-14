@@ -398,8 +398,8 @@ func handleHookHandlerReceivedAt(receivedAt time.Time) {
 	}
 	// A Claude, Gemini, Cursor or pi process started from a Codex pane's shell
 	// inherits AGENTDECK_INSTANCE_ID; its hooks are not the Codex session's.
-	// AGENTDECK_TOOL is exported only by Codex-family (and Hermes/DeepSeek)
-	// launches, and Codex hook payloads always carry turn_id. Panes without
+	// Managed launches stamp the owning tool in AGENTDECK_TOOL, and turn-based
+	// hook payloads always carry turn_id. Panes without
 	// AGENTDECK_TOOL and plain "codex" panes pay no I/O on the synchronous
 	// PreToolUse path; other tool names read the cached tool definitions.
 	if tool := strings.TrimSpace(os.Getenv("AGENTDECK_TOOL")); tool != "" && session.IsCodexCompatible(tool) &&
