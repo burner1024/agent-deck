@@ -1911,7 +1911,7 @@ func (s *StateDB) SetAcknowledgedStamped(id string, ack bool) (WriteStamps, erro
 }
 
 // The tool_data extras-zone keys naming the turn a user acknowledged: the
-// hook event's timestamp (unix seconds) for hook tools, the project's latest
+// hook event's receive time (unix nanoseconds) for hook tools, the project's latest
 // session update (unix milliseconds) for OpenCode.
 const (
 	ToolDataAcknowledgedHookKey     = "acknowledged_hook_ts"

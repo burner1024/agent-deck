@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/asheshgoplani/agent-deck/internal/statedb"
 )
 
 // writeStopFileAt writes a Stop ("waiting") hook event with the given unix
@@ -240,5 +242,63 @@ func TestAcknowledgeIfWaiting_SeenStaleStopIsIdle(t *testing.T) {
 	}
 	if status, _ := cliPass(t, load()); status != StatusIdle {
 		t.Fatalf("stale Stop, after the attach = %q, want idle", status)
+	}
+}
+
+func TestAcknowledgeSeen_HookIdentityWithinSecond(t *testing.T) {
+	for _, event := range []string{"Stop", "PermissionRequest", "legacy_seconds"} {
+		t.Run(event, func(t *testing.T) {
+			inst, cleanup := startHookLagInstance(t, "ack-precision", auditConductorIdlePane)
+			defer cleanup()
+			storage, err := NewStorageWithProfile("_test-ack-precision")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer storage.Close()
+			inst.Status = StatusRunning
+			if err := storage.SaveWithGroups([]*Instance{inst}, nil); err != nil {
+				t.Fatal(err)
+			}
+			load := func() *Instance {
+				t.Helper()
+				instances, _, err := storage.LoadWithGroups()
+				if err != nil || len(instances) != 1 {
+					t.Fatalf("load: %v (%d instances)", err, len(instances))
+				}
+				return instances[0]
+			}
+			// Both events share a second; receive order puts the second after
+			// the visit regardless of how long the status pass takes.
+			first := time.Unix(time.Now().Add(time.Second).Unix(), 100_000_000)
+			writeHook := func(event string, received time.Time) {
+				t.Helper()
+				body := fmt.Sprintf(`{"status":"waiting","session_id":"sess-610","event":%q,"ts":%d,"received_at_ns":%d}`,
+					event, first.Unix(), received.UnixNano())
+				if err := os.WriteFile(filepath.Join(GetHooksDir(), inst.ID+".json"), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeHook("Stop", first)
+			attached := load()
+			if err := AcknowledgeIfWaiting(storage.GetDB(), attached); err != nil {
+				t.Fatal(err)
+			}
+			if status, _ := cliPass(t, load()); status != StatusIdle {
+				t.Fatalf("seen event = %q, want idle", status)
+			}
+			if event == "legacy_seconds" {
+				if err := storage.GetDB().SetAcknowledgedTurn(inst.ID, statedb.ToolDataAcknowledgedHookKey, first.Unix()); err != nil {
+					t.Fatal(err)
+				}
+				event = "Stop"
+			}
+			writeHook(event, first.Add(100*time.Millisecond))
+			if status, _ := cliPass(t, load()); status != StatusWaiting {
+				t.Errorf("new event in the same second = %q, want waiting", status)
+			}
+			if status, _ := cliPass(t, attached); status != StatusWaiting {
+				t.Errorf("live event in the same second = %q, want waiting", status)
+			}
+		})
 	}
 }

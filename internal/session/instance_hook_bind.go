@@ -121,6 +121,7 @@ func (i *Instance) UpdateHookStatus(status *HookStatus) {
 	// it carried had already been written here and stuck, flipping this
 	// instance's status. See the candidate_has_no_conversation_data branch.
 	prevHookStatus, prevHookEvent, prevHookLastUpdate := i.hookStatus, i.hookEvent, i.hookLastUpdate
+	prevHookReceivedAt := i.hookReceivedAt
 	prevStartedGen, prevCompletedGen := i.codexStartedGeneration, i.codexCompletedGeneration
 	prevStartedSID, prevCompletedSID := i.codexStartedSessionID, i.codexCompletedSessionID
 	// rejected tracks whether this event was rolled back by restoreHook below.
@@ -131,6 +132,7 @@ func (i *Instance) UpdateHookStatus(status *HookStatus) {
 	restoreHook := func() {
 		rejected = true
 		i.hookStatus, i.hookEvent, i.hookLastUpdate = prevHookStatus, prevHookEvent, prevHookLastUpdate
+		i.hookReceivedAt = prevHookReceivedAt
 		i.codexStartedGeneration, i.codexCompletedGeneration = prevStartedGen, prevCompletedGen
 		i.codexStartedSessionID, i.codexCompletedSessionID = prevStartedSID, prevCompletedSID
 		i.codexInvalidatingGeneration = prevInvalidatingGen
@@ -139,11 +141,13 @@ func (i *Instance) UpdateHookStatus(status *HookStatus) {
 	// Detect whether this is genuinely new data (newer timestamp than last seen).
 	// Only reset acknowledgment on new events — not on re-application of the same
 	// stale hook file, which would undo the user's intentional acknowledge.
-	isNewEvent := status.UpdatedAt.After(i.hookLastUpdate)
+	isNewEvent := hookIdentityTime(status.UpdatedAt, status.ReceivedAt).
+		After(hookIdentityTime(i.hookLastUpdate, i.hookReceivedAt))
 
 	i.hookStatus = status.Status
 	i.hookEvent = status.Event
 	i.hookLastUpdate = status.UpdatedAt
+	i.hookReceivedAt = status.ReceivedAt
 	i.setCodexGenerationEvidence(status)
 
 	// Permission-type events are always attention-needed, even if the user
@@ -544,6 +548,7 @@ func (i *Instance) ClearHookStatus() {
 	i.noteAgentActivityLocked(i.hookLastUpdate)
 	i.hookStatus = ""
 	i.hookLastUpdate = time.Time{}
+	i.hookReceivedAt = time.Time{}
 	i.mu.Unlock()
 	// Flush BEFORE removing the file below, bypassing the write throttle —
 	// this evidence has no other way to survive. Outside i.mu: the SQLite

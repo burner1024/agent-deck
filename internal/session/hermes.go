@@ -149,6 +149,7 @@ func (i *Instance) seedHermesHookGeneration(status string, pending bool) (string
 	i.hookStatus = status
 	i.hookEvent = seed.Event
 	i.hookLastUpdate = now
+	i.hookReceivedAt = time.Time{}
 	i.mu.Unlock()
 	return generation, nil
 }
