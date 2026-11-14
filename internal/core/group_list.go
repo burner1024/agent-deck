@@ -112,22 +112,24 @@ func groupListFromTree(tree *session.GroupTree) GroupListOut {
 // variable so tests can count the refreshes. UpdateStatusOnly, not
 // UpdateStatus: a listing only reads statuses, and UpdateStatus's metadata
 // sync can run the opencode CLI for every live OpenCode session (seconds each).
-var groupListRefreshStatus = func(inst *session.Instance) {
-	var pass session.StatusUpdatePass
+var groupListRefreshStatus = func(pass *session.StatusUpdatePass, inst *session.Instance) {
 	_ = pass.UpdateStatusOnly(inst)
 }
 
 // refreshTreeStatuses refreshes every session of the tree once. A session is
 // counted once per ancestor group; refreshing it at each count cost one full
 // status refresh per level. GroupList gives a stable order; Groups (what the
-// counts read) catches any group GroupList lacks.
+// counts read) catches any group GroupList lacks. One StatusUpdatePass serves
+// the whole sweep, so sessions on one tmux socket share its session listing
+// and process snapshot.
 func refreshTreeStatuses(tree *session.GroupTree) {
+	var pass session.StatusUpdatePass
 	seen := make(map[*session.Instance]struct{})
 	refresh := func(g *session.Group) {
 		for _, sess := range g.Sessions {
 			if _, ok := seen[sess]; !ok {
 				seen[sess] = struct{}{}
-				groupListRefreshStatus(sess)
+				groupListRefreshStatus(&pass, sess)
 			}
 		}
 	}

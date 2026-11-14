@@ -125,8 +125,7 @@ func printGroupHelp() {
 // UpdateStatus: a listing only reads statuses, and UpdateStatus's metadata
 // sync can run the opencode CLI for every live OpenCode session (seconds each,
 // on every `group list` and every remote-agent change probe).
-var groupListRefreshStatus = func(inst *session.Instance) {
-	var pass session.StatusUpdatePass
+var groupListRefreshStatus = func(pass *session.StatusUpdatePass, inst *session.Instance) {
 	_ = pass.UpdateStatusOnly(inst)
 }
 
@@ -136,14 +135,17 @@ var groupListRefreshStatus = func(inst *session.Instance) {
 // per level (three for deck/ashesh/archive) on every `group list` and on
 // every remote-agent change probe.
 // GroupList is walked first for a stable order; Groups (what the counts
-// read) catches any group GroupList lacks.
+// read) catches any group GroupList lacks. One StatusUpdatePass serves the
+// whole sweep, so sessions on one tmux socket share its session listing and
+// process snapshot.
 func refreshGroupTreeStatuses(groupTree *session.GroupTree) {
+	var pass session.StatusUpdatePass
 	seen := make(map[*session.Instance]struct{})
 	refresh := func(g *session.Group) {
 		for _, sess := range g.Sessions {
 			if _, ok := seen[sess]; !ok {
 				seen[sess] = struct{}{}
-				groupListRefreshStatus(sess)
+				groupListRefreshStatus(&pass, sess)
 			}
 		}
 	}
