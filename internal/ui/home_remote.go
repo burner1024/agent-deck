@@ -129,10 +129,18 @@ func (h *Home) createRemoteGroup(name, remoteName, parentPath, defaultPath strin
 	}
 }
 
+// remoteGroupDeleteArgs builds the `group delete` argv sent to a remote. It
+// passes --force so the remote moves the group's sessions out instead of
+// refusing: without it a group holding only archived sessions, which the active
+// view counts as (0), is refused with no visible cause. The CLI moves them to
+// the group's parent (the default group at top level), and the confirmation
+// dialog says so. Local TUI delete differs: it moves them to the default group.
+func remoteGroupDeleteArgs(groupPath string) []string {
+	return []string{"group", "delete", "--force", groupPath}
+}
+
 // deleteRemoteGroup routes a TUI "delete group" for one of the remote's own
-// groups over SSH: `agent-deck group delete <path>` on the remote, without
-// --force, so a group that still holds sessions is refused by the remote with
-// its own message instead of silently moving sessions around.
+// groups over SSH, running the remote's own `group delete`.
 func (h *Home) deleteRemoteGroup(groupPath, remoteName string) tea.Cmd {
 	h.markRemoteAction(remoteName, "delete-group", groupPath)
 	return func() tea.Msg {
@@ -145,7 +153,7 @@ func (h *Home) deleteRemoteGroup(groupPath, remoteName string) tea.Cmd {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if _, err := runner.RunCommand(ctx, "group", "delete", groupPath); err != nil {
+		if _, err := runner.RunCommand(ctx, remoteGroupDeleteArgs(groupPath)...); err != nil {
 			return result(fmt.Errorf("failed to delete group '%s' on %s: %w", groupPath, remoteName, err))
 		}
 		return result(nil)
