@@ -23,8 +23,8 @@ import (
 // record while the session is still on that turn, and the next turn is unseen
 // again.
 
-// ReadAcknowledgedHookFromToolData returns the recorded hook timestamp (unix
-// seconds), 0 for none.
+// ReadAcknowledgedHookFromToolData returns the recorded hook receive time (unix
+// nanoseconds), 0 for none. Legacy second-scale values are unverified.
 func ReadAcknowledgedHookFromToolData(td json.RawMessage) int64 {
 	var ts int64
 	readToolDataKey(td, statedb.ToolDataAcknowledgedHookKey, &ts)
@@ -58,7 +58,7 @@ func (i *Instance) AcknowledgeSeen(db *statedb.StateDB) error {
 	i.mu.Lock()
 	var hookTS int64
 	if HookStatusTool(i.Tool) && !i.hookLastUpdate.IsZero() {
-		hookTS = i.hookLastUpdate.Unix()
+		hookTS = hookIdentityTime(i.hookLastUpdate, i.hookReceivedAt).UnixNano()
 		i.ackedHookTS, i.ackedHookApplied = hookTS, hookTS
 	}
 	if i.tmuxSession != nil {
@@ -116,12 +116,27 @@ func (i *Instance) acknowledgeOpenCodeSeen(db *statedb.StateDB) error {
 // names the waiting hook event it holds. Applied once per record, so a reset
 // since (new activity, the u key) stands. Caller holds i.mu.
 func (i *Instance) applyAcknowledgedHookLocked() {
-	if i.tmuxSession == nil || i.ackedHookTS == 0 || i.ackedHookTS == i.ackedHookApplied ||
-		i.hookStatus != "waiting" || i.hookLastUpdate.Unix() != i.ackedHookTS {
+	if i.tmuxSession == nil || i.ackedHookTS == 0 || i.hookStatus != "waiting" {
+		return
+	}
+	// Second-scale records cannot identify an event within their second.
+	if i.ackedHookTS < 1_000_000_000_000 ||
+		hookIdentityTime(i.hookLastUpdate, i.hookReceivedAt).UnixNano() != i.ackedHookTS {
+		i.tmuxSession.ResetAcknowledged()
+		return
+	}
+	if i.ackedHookTS == i.ackedHookApplied {
 		return
 	}
 	i.ackedHookApplied = i.ackedHookTS
 	i.tmuxSession.Acknowledge()
+}
+
+func hookIdentityTime(updated, received time.Time) time.Time {
+	if !received.IsZero() {
+		return received
+	}
+	return updated
 }
 
 // applyAcknowledgedOpenCodeTurn acknowledges an OpenCode session whose
