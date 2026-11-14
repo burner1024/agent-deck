@@ -203,6 +203,12 @@ func transcriptText(content json.RawMessage) string {
 // single JSONL lines comfortably under that; a line truncated by the byte cut
 // is discarded rather than half-parsed.
 func TranscriptTailLines(path string, n int) ([]string, error) {
+	return transcriptTailLinesWithin(path, n, 512*1024)
+}
+
+// transcriptTailLinesWithin is TranscriptTailLines with the byte window as a
+// parameter.
+func transcriptTailLinesWithin(path string, n int, maxTailBytes int64) ([]string, error) {
 	f, err := os.Open(path) // #nosec G304 -- callers validate via ValidateTranscriptPath or supply test paths
 	if err != nil {
 		return nil, err
@@ -218,7 +224,6 @@ func TranscriptTailLines(path string, n int) ([]string, error) {
 		return nil, fmt.Errorf("empty file")
 	}
 
-	const maxTailBytes = int64(512 * 1024)
 	offset := int64(0)
 	if size > maxTailBytes {
 		offset = size - maxTailBytes
@@ -236,7 +241,7 @@ func TranscriptTailLines(path string, n int) ([]string, error) {
 	if len(rawLines) > n {
 		start = len(rawLines) - n
 	}
-	lines := make([]string, 0, n)
+	lines := make([]string, 0, len(rawLines)-start)
 	for _, raw := range rawLines[start:] {
 		if s := strings.TrimSpace(raw); s != "" {
 			lines = append(lines, s)
