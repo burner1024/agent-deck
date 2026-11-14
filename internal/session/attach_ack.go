@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strconv"
 	"time"
@@ -53,6 +52,9 @@ func readToolDataKey(td json.RawMessage, key string, v any) {
 // AcknowledgeSeen acknowledges the session for this process and, through db,
 // for every process reading the profile's state. db may be nil.
 func (i *Instance) AcknowledgeSeen(db *statedb.StateDB) error {
+	if i.Tool == "opencode" {
+		return i.acknowledgeOpenCodeSeen(db)
+	}
 	i.mu.Lock()
 	var hookTS int64
 	if HookStatusTool(i.Tool) && !i.hookLastUpdate.IsZero() {
@@ -75,8 +77,7 @@ func (i *Instance) AcknowledgeSeen(db *statedb.StateDB) error {
 
 // AcknowledgeIfWaiting is the TUI's acknowledge-on-attach for a process that
 // has not polled the session: one status pass as `list` runs it, then, when
-// the session is waiting, AcknowledgeSeen, or for OpenCode the record of its
-// project's latest session update.
+// the session is waiting, AcknowledgeSeen.
 func AcknowledgeIfWaiting(db *statedb.StateDB, inst *Instance) error {
 	RefreshInstancesForCLIStatus([]*Instance{inst})
 	var pass StatusUpdatePass
@@ -86,27 +87,29 @@ func AcknowledgeIfWaiting(db *statedb.StateDB, inst *Instance) error {
 	if inst.GetStatusThreadSafe() != StatusWaiting {
 		return nil
 	}
-	if inst.Tool != "opencode" {
-		return inst.AcknowledgeSeen(db)
-	}
-	updated, err := inst.openCodeLatestUpdate()
+	return inst.AcknowledgeSeen(db)
+}
+
+func (i *Instance) acknowledgeOpenCodeSeen(db *statedb.StateDB) error {
+	updated, err := i.openCodeLatestUpdate()
 	if err != nil {
-		// The session cannot be named to other processes; acknowledge it for
-		// this one and the TUIs that read the shared flag.
-		sessionLog.Debug("opencode_ack_turn_unknown", slog.String("instance", inst.ID), slog.String("error", err.Error()))
-		return inst.AcknowledgeSeen(db)
+		// Without a named turn, an acknowledgement could hide unseen output.
+		if sess := i.GetTmuxSession(); sess != nil {
+			sess.ResetAcknowledged()
+		}
+		return fmt.Errorf("identifying seen opencode turn: %w", err)
 	}
-	inst.mu.Lock()
-	inst.ackedOpenCodeUpdated, inst.ackedOpenCodeApplied = updated, updated
-	if inst.tmuxSession != nil {
-		inst.tmuxSession.Acknowledge()
+	i.mu.Lock()
+	i.ackedOpenCodeUpdated, i.ackedOpenCodeApplied = updated, updated
+	if i.tmuxSession != nil {
+		i.tmuxSession.Acknowledge()
 	}
-	inst.mu.Unlock()
-	inst.noteVisit(time.Now())
+	i.mu.Unlock()
+	i.noteVisit(time.Now())
 	if db == nil {
 		return nil
 	}
-	return db.SetAcknowledgedTurn(inst.ID, statedb.ToolDataAcknowledgedOpenCodeKey, updated)
+	return db.SetAcknowledgedTurn(i.ID, statedb.ToolDataAcknowledgedOpenCodeKey, updated)
 }
 
 // applyAcknowledgedHookLocked acknowledges the session when the loaded record
@@ -123,23 +126,31 @@ func (i *Instance) applyAcknowledgedHookLocked() {
 
 // applyAcknowledgedOpenCodeTurn acknowledges an OpenCode session whose
 // project's latest session update is the one the loaded record names: nothing
-// has happened in it since it was seen. Applied once per record, like
-// applyAcknowledgedHookLocked. Asks the session's OpenCode server, so the
+// has happened in it since it was seen. A mismatch or unavailable server clears
+// the restored flag: unverified output must stay unseen. Asks the server, so the
 // caller must not hold i.mu.
 func (i *Instance) applyAcknowledgedOpenCodeTurn() {
 	i.mu.RLock()
-	rec, applied, sess := i.ackedOpenCodeUpdated, i.ackedOpenCodeApplied, i.tmuxSession
+	rec, sess := i.ackedOpenCodeUpdated, i.tmuxSession
 	i.mu.RUnlock()
-	if i.Tool != "opencode" || rec == 0 || rec == applied || sess == nil {
+	if i.Tool != "opencode" || rec == 0 || sess == nil {
 		return
 	}
 	updated, err := i.openCodeLatestUpdate()
-	if err != nil || updated != rec {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.ackedOpenCodeUpdated != rec || i.tmuxSession != sess {
 		return
 	}
-	i.mu.Lock()
+	if err != nil || updated != rec {
+		i.ackedOpenCodeApplied = 0
+		sess.ResetAcknowledged()
+		return
+	}
+	if i.ackedOpenCodeApplied == rec {
+		return
+	}
 	i.ackedOpenCodeApplied = rec
-	i.mu.Unlock()
 	sess.Acknowledge()
 }
 

@@ -84,12 +84,24 @@ func TestAcknowledgeIfWaiting_SeenStopIsIdleForLaterProcesses(t *testing.T) {
 // update rebind it, so after an in-pane /new it names a conversation that
 // never changes again, and a seen turn there would hide every later one.
 func TestAcknowledgeIfWaiting_OpenCodeSeenTurnIsIdle(t *testing.T) {
+	for _, status := range []Status{StatusRunning, StatusWaiting, StatusIdle} {
+		for _, local := range []bool{false, true} {
+			t.Run(fmt.Sprintf("saved_%s/local_%t", status, local), func(t *testing.T) {
+				testOpenCodeAcknowledgement(t, status, local)
+			})
+		}
+	}
+}
+
+func testOpenCodeAcknowledgement(t *testing.T, savedStatus Status, local bool) {
+	t.Helper()
 	skipIfNoTmuxBinary(t)
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
 	var mu sync.Mutex
 	paneUpdated := 200
+	unavailable := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/session" {
 			http.NotFound(w, r)
@@ -97,6 +109,10 @@ func TestAcknowledgeIfWaiting_OpenCodeSeenTurnIsIdle(t *testing.T) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
+		if unavailable {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		_, _ = fmt.Fprintf(w, `[{"id":"ses_old","directory":%q,"time":{"created":50,"updated":100}},`+
 			`{"id":"ses_pane","directory":%q,"time":{"created":150,"updated":%d}}]`, tmpHome, tmpHome, paneUpdated)
 	}))
@@ -127,7 +143,7 @@ func TestAcknowledgeIfWaiting_OpenCodeSeenTurnIsIdle(t *testing.T) {
 		t.Fatalf("storage: %v", err)
 	}
 	defer storage.Close()
-	inst.Status = StatusRunning
+	inst.Status = savedStatus
 	if err := storage.SaveWithGroups([]*Instance{inst}, nil); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -140,9 +156,39 @@ func TestAcknowledgeIfWaiting_OpenCodeSeenTurnIsIdle(t *testing.T) {
 		return instances[0]
 	}
 
-	if status, _ := cliPass(t, load()); status != StatusWaiting {
-		t.Fatalf("before any attach = %q, want waiting", status)
+	attaching := load()
+	var ackErr error
+	if local {
+		ackErr = attaching.AcknowledgeSeen(storage.GetDB())
+	} else {
+		// An idle row needs an unseen turn before attach will acknowledge it.
+		attaching.tmuxSession.ResetAcknowledged()
+		ackErr = AcknowledgeIfWaiting(storage.GetDB(), attaching)
 	}
+	if ackErr != nil {
+		t.Fatalf("acknowledge: %v", ackErr)
+	}
+	if got := load().ackedOpenCodeUpdated; got != 200 {
+		t.Fatalf("stored turn = %d, want 200", got)
+	}
+	for i := range 2 {
+		if status, _ := cliPass(t, load()); status != StatusIdle {
+			t.Fatalf("listing %d after the attach = %q, want idle", i+1, status)
+		}
+	}
+
+	mu.Lock()
+	unavailable = true
+	mu.Unlock()
+	if status, _ := cliPass(t, load()); status != StatusWaiting {
+		t.Errorf("unavailable server = %q, want waiting", status)
+	}
+	if err := load().AcknowledgeSeen(storage.GetDB()); err == nil {
+		t.Error("acknowledging an unknown turn succeeded")
+	}
+	mu.Lock()
+	unavailable = false
+	mu.Unlock()
 	if err := AcknowledgeIfWaiting(storage.GetDB(), load()); err != nil {
 		t.Fatalf("acknowledge: %v", err)
 	}
