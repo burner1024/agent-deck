@@ -20,7 +20,7 @@ func TestSetAcknowledgedTurn_RecordsTheSeenTurnAndUnreadClearsIt(t *testing.T) {
 		t.Fatalf("SaveInstance: %v", err)
 	}
 
-	if err := db.SetAcknowledgedTurn("a1", ToolDataAcknowledgedHookKey, 1700000000); err != nil {
+	if err := db.SetAcknowledgedTurn("a1", ToolDataAcknowledgedHookKey, 1700000000123456789); err != nil {
 		t.Fatalf("SetAcknowledgedTurn hook: %v", err)
 	}
 	if err := db.SetAcknowledgedTurn("a1", ToolDataAcknowledgedOpenCodeKey, 1700000000123); err != nil {
@@ -35,7 +35,7 @@ func TestSetAcknowledgedTurn_RecordsTheSeenTurnAndUnreadClearsIt(t *testing.T) {
 	}
 	td := toolDataOf(t, db, "a1")
 	for key, want := range map[string]string{
-		ToolDataAcknowledgedHookKey:     "1700000000",
+		ToolDataAcknowledgedHookKey:     "1700000000123456789",
 		ToolDataAcknowledgedOpenCodeKey: "1700000000123",
 		"claude_session_id":             `"c1"`,
 	} {
