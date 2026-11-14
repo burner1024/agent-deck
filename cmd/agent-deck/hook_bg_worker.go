@@ -16,44 +16,42 @@ import (
 // bg-spare workers keep the environment of the pane that first started them,
 // AGENTDECK_INSTANCE_ID included. A conversation later backgrounded from a
 // DIFFERENT pane runs in that worker, so its hooks name the wrong instance.
-// Such hooks cannot be attributed reliably and are dropped: the status file,
-// the session-id binding and every other side effect belong to the pane's
-// own Claude process only.
+// A non-bg record parking the worker's job identifies its owning tmux pane.
+// Route hooks to that pane's instance; drop hooks without a known owner.
 
 // maxBgWorkerAncestorHops bounds the walk from the hook process up to the
 // Claude process that fired it (the hook may run under an intermediate shell).
 const maxBgWorkerAncestorHops = 3
 
-// hookFromClaudeBackgroundWorker reports whether this hook was fired by a
-// Claude background/supervisor worker.
+// hookClaudeInstance returns the instance ID and profile to credit, or an
+// empty ID when a background worker's job has no known parking instance.
 //
 // The nearest ancestor with a ~/.claude/sessions/<pid>.json record that names
-// a kind is authoritative: kind "bg" drops the hook, any other kind (the
-// pane's own foreground Claude) credits it, even when CLAUDE_JOB_DIR is set.
+// a kind is authoritative: kind "bg" requires a parking owner, any other
+// kind credits the inherited ID, even when CLAUDE_JOB_DIR is set.
 // CLAUDE_JOB_DIR alone can leak into a pane through its tmux server's
 // environment, and treating it as proof would drop every hook on that server.
 // It is only consulted when no such record is found (e.g. /proc is missing,
 // or the worker wrote none).
 //
-// A worker running a job that this instance's own pane parked (the pane's
-// record names the job in parkedJobId and the pane's tmux session in tmux) is
-// this pane's conversation, so its hooks are credited, not dropped.
-func hookFromClaudeBackgroundWorker(instanceID string) bool {
+// The parking owner can differ from the inherited instance and profile.
+// Foreground hooks return an empty profile to keep normal profile resolution.
+func hookClaudeInstance(instanceID string) (string, string) {
 	claudeDir := claudeConfigDirForHook()
 	jobID := ""
 	if rec, ok := nearestClaudeAncestorRecord(claudeDir, os.Getppid()); ok {
 		if rec.Kind != "bg" {
-			return false
+			return instanceID, ""
 		}
 		jobID = rec.JobID
 	} else {
 		jobDir := strings.TrimSpace(os.Getenv("CLAUDE_JOB_DIR"))
 		if jobDir == "" {
-			return false
+			return instanceID, ""
 		}
 		jobID = filepath.Base(jobDir)
 	}
-	return !jobParkedByInstancePane(claudeDir, jobID, instanceID)
+	return jobParkingInstance(claudeDir, jobID)
 }
 
 // claudeSessionRecord is the part of a ~/.claude/sessions/<pid>.json record
@@ -99,32 +97,17 @@ func nearestClaudeAncestorRecord(claudeDir string, pid int) (claudeSessionRecord
 	return claudeSessionRecord{}, false
 }
 
-// hookInstanceTmuxSession returns the tmux session name of an agent-deck
-// instance, or "" when unknown; a variable so tests need no state database.
-var hookInstanceTmuxSession = func(instanceID string) string {
-	storage, err := session.NewLiveReadOnlyStorageWithProfile("")
-	if err != nil {
-		return ""
-	}
-	defer func() { _ = storage.Close() }()
-	row, err := storage.GetDB().LoadInstanceByID(instanceID)
-	if err != nil || row == nil {
-		return ""
-	}
-	return row.TmuxSession
-}
-
-// jobParkedByInstancePane reports whether a non-bg Claude record parks jobID
-// and sits in the tmux session of instanceID. The tmux field reads
-// "<session>:@<window>.%<pane>". The state database is opened only when some
-// record parks the job, so a foreign worker's hook costs one directory read.
-func jobParkedByInstancePane(claudeDir, jobID, instanceID string) bool {
+// jobParkingInstance resolves the instance whose tmux session parks jobID.
+// The tmux field reads "<session>:@<window>.%<pane>". No state database is
+// opened unless a non-bg record parks the job. All existing profiles are
+// searched read-only because the worker's inherited profile can be stale.
+func jobParkingInstance(claudeDir, jobID string) (string, string) {
 	if claudeDir == "" || jobID == "" || jobID == "." || jobID == string(filepath.Separator) {
-		return false
+		return "", ""
 	}
 	entries, err := os.ReadDir(filepath.Join(claudeDir, "sessions"))
 	if err != nil {
-		return false
+		return "", ""
 	}
 	var parkedIn []string
 	for _, e := range entries {
@@ -136,7 +119,7 @@ func jobParkedByInstancePane(claudeDir, jobID, instanceID string) bool {
 			continue
 		}
 		var rec claudeSessionRecord
-		if json.Unmarshal(data, &rec) != nil || strings.TrimSpace(rec.Kind) == "bg" ||
+		if json.Unmarshal(data, &rec) != nil || strings.TrimSpace(rec.Kind) == "" || strings.TrimSpace(rec.Kind) == "bg" ||
 			strings.TrimSpace(rec.ParkedJobID) != jobID {
 			continue
 		}
@@ -145,27 +128,51 @@ func jobParkedByInstancePane(claudeDir, jobID, instanceID string) bool {
 		}
 	}
 	if len(parkedIn) == 0 {
-		return false
+		return "", ""
 	}
-	own := hookInstanceTmuxSession(instanceID)
-	if own == "" {
-		return false
+	effectiveProfile, err := session.ResolveProfileForStorage("")
+	if err != nil {
+		return "", ""
 	}
-	for _, name := range parkedIn {
-		if name == own {
-			return true
+	profiles := []string{effectiveProfile}
+	if others, err := session.ListProfiles(); err == nil {
+		for _, profile := range others {
+			if profile != effectiveProfile {
+				profiles = append(profiles, profile)
+			}
 		}
 	}
-	return false
+	for _, profile := range profiles {
+		id := parkingInstanceInProfile(profile, parkedIn)
+		if id != "" && validInstanceID.MatchString(id) && !strings.Contains(id, "..") {
+			return id, profile
+		}
+	}
+	return "", ""
+}
+
+func parkingInstanceInProfile(profile string, tmuxNames []string) string {
+	storage, err := session.NewLiveReadOnlyStorageWithProfile(profile)
+	if err != nil {
+		return ""
+	}
+	defer storage.Close() // Read-only lookup; there are no writes to flush.
+	for _, name := range tmuxNames {
+		if id, err := storage.GetDB().LoadInstanceIDByTmuxSession(name); err == nil && id != "" {
+			return id
+		}
+	}
+	return ""
 }
 
 // scrubClaudeJobDirForCommand removes CLAUDE_JOB_DIR from this process's
 // environment before any tmux command can run (#2683), so a tmux server that
 // agent-deck starts from inside a Claude background job never carries it into
-// its panes. The hook handler keeps it: it is one of its bg-worker signals,
+// its panes. The hook receivers keep it: it is one of their bg-worker signals,
 // and every tmux exec it makes goes through the filtered tmux spawn env.
 func scrubClaudeJobDirForCommand(args []string) {
-	if len(args) > 0 && args[0] == "hook-handler" {
+	if len(args) > 0 && (args[0] == "hook-handler" ||
+		(len(args) > 1 && args[0] == "trace" && args[1] == "hook")) {
 		return
 	}
 	_ = os.Unsetenv("CLAUDE_JOB_DIR")
