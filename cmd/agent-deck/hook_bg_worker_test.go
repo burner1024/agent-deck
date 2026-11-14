@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/asheshgoplani/agent-deck/internal/session"
+	"github.com/asheshgoplani/agent-deck/internal/statedb"
 )
 
 // Issue #2683: Claude Code's agent-view supervisor and its bg-spare workers
@@ -124,6 +125,10 @@ func TestScrubClaudeJobDirForCommand(t *testing.T) {
 	if _, ok := os.LookupEnv("CLAUDE_JOB_DIR"); !ok {
 		t.Fatal("hook-handler must keep CLAUDE_JOB_DIR")
 	}
+	scrubClaudeJobDirForCommand([]string{"trace", "hook"})
+	if _, ok := os.LookupEnv("CLAUDE_JOB_DIR"); !ok {
+		t.Fatal("trace hook must keep CLAUDE_JOB_DIR")
+	}
 	scrubClaudeJobDirForCommand([]string{"add", "."})
 	if _, ok := os.LookupEnv("CLAUDE_JOB_DIR"); ok {
 		t.Fatal("CLAUDE_JOB_DIR must be scrubbed before agent-deck can start a tmux server")
@@ -131,32 +136,33 @@ func TestScrubClaudeJobDirForCommand(t *testing.T) {
 	scrubClaudeJobDirForCommand(nil) // bare TUI launch: no panic, still scrubbed
 }
 
-// A conversation the pane's own Claude parked into a background job runs in a
-// kind=bg worker, but it is still this pane's session: the pane's interactive
-// record names the job in parkedJobId and the pane in tmux. Its hooks are
-// credited; a job parked by another pane is still dropped (#2683).
+// A parked job's hooks belong to the instance that owns the parking pane,
+// even when the worker inherited a different instance ID or profile.
 func TestHookHandler_BgWorkerOfJobParkedByThisPane(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		parkedTmux string
 		jobDirOnly bool
-		credited   bool
+		owner      string
+		profile    string
 	}{
-		{name: "parked by this pane", parkedTmux: "agentdeck_pane-a_1234abcd:@8.%8", credited: true},
-		{name: "parked by this pane, job dir only", parkedTmux: "agentdeck_pane-a_1234abcd:@8.%8", jobDirOnly: true, credited: true},
-		{name: "parked by another pane", parkedTmux: "agentdeck_pane-b_5678abcd:@2.%3"},
+		{name: "parked by this pane", parkedTmux: "agentdeck_pane-a_1234abcd:@8.%8", owner: "inst-pane-a"},
+		{name: "parked by this pane, job dir only", parkedTmux: "agentdeck_pane-a_1234abcd:@8.%8", jobDirOnly: true, owner: "inst-pane-a"},
+		{name: "parked by another pane", parkedTmux: "agentdeck_pane-b_5678abcd:@2.%3", owner: "inst-pane-b"},
+		{name: "parked by another profile", parkedTmux: "agentdeck_pane-b_5678abcd:@2.%3", owner: "inst-pane-b", profile: "parking"},
+		{name: "parked by an unowned pane", parkedTmux: "unowned:@2.%3"},
 		{name: "not parked anywhere"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			claudeDir := setupBgWorkerHookEnv(t)
-			old := hookInstanceTmuxSession
-			hookInstanceTmuxSession = func(id string) string {
-				if id == "inst-pane-a" {
-					return "agentdeck_pane-a_1234abcd"
-				}
-				return ""
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv("AGENTDECK_PROFILE", "starter")
+			seedParkedHookInstance(t, "starter", "inst-pane-a", "agentdeck_pane-a_1234abcd")
+			profile := tc.profile
+			if profile == "" {
+				profile = "starter"
 			}
-			t.Cleanup(func() { hookInstanceTmuxSession = old })
+			seedParkedHookInstance(t, profile, "inst-pane-b", "agentdeck_pane-b_5678abcd")
 			sessionsDir := filepath.Join(claudeDir, "sessions")
 			if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
 				t.Fatal(err)
@@ -178,12 +184,32 @@ func TestHookHandler_BgWorkerOfJobParkedByThisPane(t *testing.T) {
 				}
 			}
 			runBgWorkerHook(t)
-			if got := hookStatusWritten(t); got != tc.credited {
-				t.Fatalf("status written = %v, want %v", got, tc.credited)
+			for _, id := range []string{"inst-pane-a", "inst-pane-b"} {
+				data, err := os.ReadFile(filepath.Join(getHooksDir(), id+".json"))
+				if got, want := err == nil, id == tc.owner; got != want {
+					t.Errorf("%s status written = %v, want %v", id, got, want)
+				}
+				if err == nil && !strings.Contains(string(data), bgWorkerTestSession) {
+					t.Errorf("%s status does not bind the worker conversation: %s", id, data)
+				}
 			}
-			if got := lifecycleLogHasBgReject(t); got == tc.credited {
-				t.Fatalf("bg-worker reject logged = %v, want %v", got, !tc.credited)
+			if got, want := lifecycleLogHasBgReject(t), tc.owner == ""; got != want {
+				t.Fatalf("bg-worker reject logged = %v, want %v", got, want)
 			}
 		})
+	}
+}
+
+func seedParkedHookInstance(t *testing.T, profile, id, tmuxName string) {
+	t.Helper()
+	storage, err := session.NewStorageWithProfile(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	if err := storage.GetDB().InsertInstanceRow(&statedb.InstanceRow{
+		ID: id, Title: id, Tool: "claude", TmuxSession: tmuxName,
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
