@@ -30,6 +30,11 @@ func TestHookHandler_ForeignHarnessInCodexPane(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			setupBgWorkerHookEnv(t)
+			inherited := "codex"
+			if tt.tool == "codex" {
+				inherited = "claude"
+			}
+			t.Setenv("AGENTDECK_TOOL", inherited)
 			t.Setenv("AGENTDECK_TOOL", tt.tool)
 			runHookHandlerWith(t, tt.payload)
 			if got := hookStatusWritten(t); got != tt.wantWrite {

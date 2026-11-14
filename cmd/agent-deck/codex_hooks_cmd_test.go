@@ -103,8 +103,7 @@ func TestHandleCodexNotify_WritesStatus(t *testing.T) {
 // runCodexNotifyAsChildOf fires one agent-turn-complete notify as a child of an
 // agent-deck instance and returns the hooks dir plus the instance id.
 // savedTool is the tool stored in the state db ("" = no row for the id);
-// envTool is AGENTDECK_TOOL in the notify's environment ("" = unset, the real
-// shape inside a Claude pane: only INSTANCE_ID and PROFILE are exported).
+// envTool is the owning pane's stamp (empty for older builds).
 func runCodexNotifyAsChildOf(t *testing.T, savedTool, envTool string) (hooksDir, instanceID string) {
 	t.Helper()
 	tmpHome := t.TempDir()
@@ -162,11 +161,12 @@ func TestHandleCodexNotify_ForeignInstanceToolWritesNothing(t *testing.T) {
 		{"gemini_env_unset", "gemini", ""},
 		{"opencode_env_unset", "opencode", ""},
 		{"pi_env_unset", "pi", ""},
-		{"claude_env_claude", "claude", "claude"},
+		{"claude_stamp_overrides_codex", "claude", "claude"},
 		{"env_claude_no_row", "", "claude"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AGENTDECK_TOOL", "codex")
 			dir, id := runCodexNotifyAsChildOf(t, tc.savedTool, tc.envTool)
 			for _, name := range []string{id + ".json", id + ".events.jsonl"} {
 				if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
@@ -180,13 +180,14 @@ func TestHandleCodexNotify_ForeignInstanceToolWritesNothing(t *testing.T) {
 func TestHandleCodexNotify_CodexOrUndeterminableInstanceStillWrites(t *testing.T) {
 	cases := []struct{ name, savedTool, envTool string }{
 		{"codex_env_unset", "codex", ""},
-		{"codex_env_codex", "codex", "codex"},
+		{"codex_stamp_overrides_claude", "codex", "codex"},
 		{"env_codex_no_row", "", "codex"},
 		// Tool undeterminable (no env, no row): fail open, historical behaviour.
 		{"no_env_no_row", "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AGENTDECK_TOOL", "claude")
 			dir, id := runCodexNotifyAsChildOf(t, tc.savedTool, tc.envTool)
 			if _, err := os.Stat(filepath.Join(dir, id+".json")); err != nil {
 				t.Fatalf("hook file missing: %v", err)

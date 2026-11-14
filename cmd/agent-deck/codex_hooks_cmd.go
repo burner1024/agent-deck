@@ -256,11 +256,11 @@ func handleCodexNotify() {
 }
 
 // codexNotifyInstanceTool is the tool of the instance a notify fired under, or
-// "" when it cannot be told. AGENTDECK_TOOL is exported only by Codex-family
-// launches (a Claude pane lacks it), so it is trusted when set: no I/O. When
+// "" when it cannot be told. Managed launches stamp their owning tool in
+// AGENTDECK_TOOL, so it is trusted when set: no I/O. When
 // unset, one read-only state.db lookup by id (profile from AGENTDECK_PROFILE)
-// answers for custom-command, restart and fork launches that may lack the
-// variable. Fail-open: a missing row or unreadable db returns "" and the
+// answers for panes started by older builds that lack the variable.
+// Fail-open: a missing row or unreadable db returns "" and the
 // caller keeps the historical behaviour, since a wrongly dropped Codex turn
 // end is worse than the leak it guards against.
 func codexNotifyInstanceTool(instanceID string) string {
