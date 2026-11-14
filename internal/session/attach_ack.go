@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"time"
@@ -94,11 +95,14 @@ func AcknowledgeIfWaiting(db *statedb.StateDB, inst *Instance) error {
 func (i *Instance) acknowledgeOpenCodeSeen(db *statedb.StateDB) error {
 	updated, err := i.openCodeLatestUpdate(context.Background())
 	if err != nil {
-		// Without a named turn, an acknowledgement could hide unseen output.
+		// The local visit is valid without a turn identity. Keep it out of
+		// shared storage so other processes still treat the turn as unseen.
 		if sess := i.GetTmuxSession(); sess != nil {
-			sess.ResetAcknowledged()
+			sess.Acknowledge()
 		}
-		return fmt.Errorf("identifying seen opencode turn: %w", err)
+		i.noteVisit(time.Now())
+		sessionLog.Debug("opencode_ack_turn_unknown", slog.String("instance", i.ID), slog.String("error", err.Error()))
+		return nil
 	}
 	i.mu.Lock()
 	i.ackedOpenCodeUpdated, i.ackedOpenCodeApplied = updated, updated
