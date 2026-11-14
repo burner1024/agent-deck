@@ -185,8 +185,8 @@ func testOpenCodeAcknowledgement(t *testing.T, savedStatus Status, local bool) {
 	if status, _ := cliPass(t, load()); status != StatusWaiting {
 		t.Errorf("unavailable server = %q, want waiting", status)
 	}
-	if err := load().AcknowledgeSeen(storage.GetDB()); err == nil {
-		t.Error("acknowledging an unknown turn succeeded")
+	if err := load().AcknowledgeSeen(storage.GetDB()); err != nil {
+		t.Errorf("acknowledging an unknown turn: %v", err)
 	}
 	mu.Lock()
 	unavailable = false
@@ -206,6 +206,72 @@ func testOpenCodeAcknowledgement(t *testing.T, savedStatus Status, local bool) {
 	mu.Unlock()
 	if status, _ := cliPass(t, load()); status != StatusWaiting {
 		t.Fatalf("after a later turn = %q, want waiting", status)
+	}
+}
+
+func TestAcknowledgeSeen_OpenCodeUnverifiedTurnIsLocal(t *testing.T) {
+	for _, withPort := range []bool{false, true} {
+		t.Run(fmt.Sprintf("with_port_%t", withPort), func(t *testing.T) {
+			skipIfNoTmuxBinary(t)
+			project := t.TempDir()
+			t.Setenv("HOME", project)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			}))
+			t.Cleanup(srv.Close)
+			panePath := filepath.Join(project, "pane.txt")
+			if err := os.WriteFile(panePath, []byte("  Ask anything...\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			inst := NewInstanceWithTool("opencode-local-ack", project, "opencode")
+			command := fmt.Sprintf("sh -c 'cat %q; exec sleep 300' opencode", panePath)
+			if withPort {
+				command += fmt.Sprintf(" --port %d", srv.Listener.Addr().(*net.TCPAddr).Port)
+			}
+			inst.tmuxSession.RunCommandAsInitialProcess = true
+			if err := inst.tmuxSession.Start(command); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = inst.tmuxSession.Kill() })
+			inst.Command = "opencode"
+			inst.tmuxSession.Command = "opencode"
+			time.Sleep(2 * time.Second)
+			storage, err := NewStorageWithProfile("_test-opencode-local-ack")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer storage.Close()
+			inst.Status = StatusWaiting
+			if err := storage.SaveWithGroups([]*Instance{inst}, nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := inst.AcknowledgeSeen(storage.GetDB()); err != nil {
+				t.Errorf("acknowledge unverified turn: %v", err)
+			}
+			if inst.AcknowledgedAt().IsZero() {
+				t.Error("local visit was not recorded")
+			}
+			if status, _ := cliPass(t, inst); status != StatusIdle {
+				t.Errorf("opened instance = %q, want idle", status)
+			}
+			statuses, err := storage.GetDB().ReadAllStatuses()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if statuses[inst.ID].Acknowledged || !statuses[inst.ID].AcknowledgedAt.IsZero() {
+				t.Error("unverified acknowledgement was written to storage")
+			}
+			loaded, _, err := storage.LoadWithGroups()
+			if err != nil || len(loaded) != 1 {
+				t.Fatalf("load: %v (%d instances)", err, len(loaded))
+			}
+			if loaded[0].ackedOpenCodeUpdated != 0 {
+				t.Error("unverified turn token was written to storage")
+			}
+			if status, _ := cliPass(t, loaded[0]); status != StatusWaiting {
+				t.Errorf("fresh instance = %q, want waiting", status)
+			}
+		})
 	}
 }
 
