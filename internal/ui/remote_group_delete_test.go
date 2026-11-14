@@ -5,6 +5,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -43,6 +44,16 @@ func TestRemoteGroupDelete_DOnHostHeaderDoesNothing(t *testing.T) {
 
 	if h.confirmDialog.IsVisible() {
 		t.Fatalf("d on the remotes/<host> header must not open any confirm dialog")
+	}
+}
+
+// Deleting a group that still holds sessions moves them out, the way local
+// delete does, instead of being refused. Archived sessions count on the remote
+// but not in the active view's "(N)", so a refusal blocked a group shown as (0).
+func TestRemoteGroupDelete_ArgsForceMoveSessions(t *testing.T) {
+	got := strings.Join(remoteGroupDeleteArgs("work/api"), " ")
+	if want := "group delete --force work/api"; got != want {
+		t.Fatalf("remoteGroupDeleteArgs = %q, want %q", got, want)
 	}
 }
 
