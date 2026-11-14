@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/statedb"
+	"github.com/asheshgoplani/agent-deck/internal/tmux"
 )
 
 // A user acknowledges a waiting session by opening it, which turns it idle.
@@ -91,7 +92,7 @@ func AcknowledgeIfWaiting(db *statedb.StateDB, inst *Instance) error {
 }
 
 func (i *Instance) acknowledgeOpenCodeSeen(db *statedb.StateDB) error {
-	updated, err := i.openCodeLatestUpdate()
+	updated, err := i.openCodeLatestUpdate(context.Background())
 	if err != nil {
 		// Without a named turn, an acknowledgement could hide unseen output.
 		if sess := i.GetTmuxSession(); sess != nil {
@@ -144,14 +145,14 @@ func hookIdentityTime(updated, received time.Time) time.Time {
 // has happened in it since it was seen. A mismatch or unavailable server clears
 // the restored flag: unverified output must stay unseen. Asks the server, so the
 // caller must not hold i.mu.
-func (i *Instance) applyAcknowledgedOpenCodeTurn() {
+func (i *Instance) applyAcknowledgedOpenCodeTurn(ctx context.Context) {
 	i.mu.RLock()
 	rec, sess := i.ackedOpenCodeUpdated, i.tmuxSession
 	i.mu.RUnlock()
 	if i.Tool != "opencode" || rec == 0 || sess == nil {
 		return
 	}
-	updated, err := i.openCodeLatestUpdate()
+	updated, err := i.openCodeLatestUpdate(ctx)
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if i.ackedOpenCodeUpdated != rec || i.tmuxSession != sess {
@@ -173,39 +174,49 @@ func (i *Instance) applyAcknowledgedOpenCodeTurn() {
 // (buildOpenCodeSSEPortFlag).
 var openCodePortFlag = regexp.MustCompile(`--port[= ]+['"]?(\d+)`)
 
-// openCodeAckQueryTimeout bounds the one request to a session's own
-// localhost server; a listing runs it for every acknowledged OpenCode row.
+// openCodeAckQueryTimeout bounds port discovery and the request to the pane's
+// localhost server. CLI validation also has an aggregate deadline.
 const openCodeAckQueryTimeout = time.Second
 
 // openCodeLatestUpdate returns the latest update (unix milliseconds) among the
 // project's sessions on the OpenCode server the pane was started with
-// (--port): the port is not stored, and a one-pass process never saw the
-// launch. Every project session counts, not only the bound one: only a full
-// status update rebinds it, so after an in-pane /new it names a conversation
+// (--port). A loaded instance discovers it once; managed launches set or clear
+// OpenCodePort themselves. Every project session counts, not only the bound one:
+// only a full status update rebinds it, so after an in-pane /new it names a conversation
 // that no longer changes. A sibling's activity then reads as unseen, never the
 // pane's own as seen.
-func (i *Instance) openCodeLatestUpdate() (int64, error) {
+func (i *Instance) openCodeLatestUpdate(ctx context.Context) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, openCodeAckQueryTimeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	i.mu.RLock()
-	projectPath, sess := i.ProjectPath, i.tmuxSession
+	projectPath, sess, port := i.ProjectPath, i.tmuxSession, i.OpenCodePort
 	i.mu.RUnlock()
 	if sess == nil {
 		return 0, fmt.Errorf("no tmux session")
 	}
-	cmd, err := sess.PaneStartCommand()
-	if err != nil {
-		return 0, err
-	}
-	m := openCodePortFlag.FindStringSubmatch(cmd)
-	if m == nil {
-		return 0, fmt.Errorf("opencode pane was started without --port")
-	}
-	port, err := strconv.Atoi(m[1])
-	if err != nil {
-		return 0, fmt.Errorf("parsing opencode port %q: %w", m[1], err)
+	if port == 0 {
+		cmd, err := tmux.ExecContext(ctx, sess.SocketName, "display-message", "-p", "-t", sess.Name+":", "#{pane_start_command}").Output()
+		if err != nil {
+			return 0, fmt.Errorf("reading opencode pane start command: %w", err)
+		}
+		m := openCodePortFlag.FindStringSubmatch(string(cmd))
+		if m == nil {
+			return 0, fmt.Errorf("opencode pane was started without --port")
+		}
+		port, err = strconv.Atoi(m[1])
+		if err != nil {
+			return 0, fmt.Errorf("parsing opencode port %q: %w", m[1], err)
+		}
+		i.mu.Lock()
+		if i.tmuxSession == sess && i.OpenCodePort == 0 {
+			i.OpenCodePort = port
+		}
+		i.mu.Unlock()
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), openCodeAckQueryTimeout)
-	defer cancel()
 	sessions, err := i.queryOpenCodeSessionsHTTP(ctx, port, projectPath)
 	if err != nil {
 		return 0, fmt.Errorf("listing opencode sessions: %w", err)

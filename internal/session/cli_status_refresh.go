@@ -1,6 +1,8 @@
 package session
 
 import (
+	"context"
+	"sync"
 	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/tmux"
@@ -11,6 +13,11 @@ import (
 // the 2s session-cache TTL: a prime slower than this risks leaving the status
 // pass with expired caches (#3089).
 const cliStatusRewarmAfter = time.Second
+
+const (
+	cliOpenCodeAckTimeout = time.Second
+	cliOpenCodeAckWorkers = 4
+)
 
 // RefreshInstancesForCLIStatus is the CLI analogue of
 // SessionDataService.refreshStatuses (internal/web) and
@@ -27,6 +34,8 @@ func RefreshInstancesForCLIStatus(instances []*Instance) {
 	if len(instances) == 0 {
 		return
 	}
+	// Finish acknowledgement I/O before warming the short-lived tmux caches.
+	validateCLIOpenCodeAcknowledgements(instances)
 	// Warm the shared tmux caches so the title fast-path in GetStatus can
 	// read pane titles (braille spinner while Claude is working) without
 	// hitting a subprocess per instance.
@@ -56,9 +65,6 @@ func RefreshInstancesForCLIStatus(instances []*Instance) {
 		if inst == nil {
 			continue
 		}
-		// OpenCode has no hooks: a stored acknowledgement is checked against
-		// its own server instead.
-		inst.applyAcknowledgedOpenCodeTurn()
 		if !HookStatusTool(inst.Tool) {
 			continue
 		}
@@ -66,6 +72,43 @@ func RefreshInstancesForCLIStatus(instances []*Instance) {
 			inst.UpdateHookStatus(hs)
 		}
 	}
+}
+
+func validateCLIOpenCodeAcknowledgements(instances []*Instance) {
+	var pending []*Instance
+	for _, inst := range instances {
+		if inst == nil || inst.Tool != "opencode" {
+			continue
+		}
+		inst.mu.RLock()
+		needsValidation := inst.ackedOpenCodeUpdated != 0 && inst.tmuxSession != nil
+		inst.mu.RUnlock()
+		if needsValidation {
+			pending = append(pending, inst)
+		}
+	}
+	if len(pending) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cliOpenCodeAckTimeout)
+	defer cancel()
+	jobs := make(chan *Instance)
+	var workers sync.WaitGroup
+	// Closing jobs ends every worker; Wait joins them before cache warm-up.
+	for range min(cliOpenCodeAckWorkers, len(pending)) {
+		workers.Go(func() {
+			for inst := range jobs {
+				// Even after the deadline, validate each mark with the cancelled
+				// context so queued rows lose their unverified restored flag.
+				inst.applyAcknowledgedOpenCodeTurn(ctx)
+			}
+		})
+	}
+	for _, inst := range pending {
+		jobs <- inst
+	}
+	close(jobs)
+	workers.Wait()
 }
 
 // ReloadHookStatus re-reads inst's hook status file from disk and applies it.
