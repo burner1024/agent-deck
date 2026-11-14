@@ -58,6 +58,9 @@ func DefaultRawPatterns(toolName string) *RawPatterns {
 	case "opencode":
 		return &RawPatterns{
 			BusyPatterns: []string{
+				// 1.19 footer: the ■/⬝ pulse, then the hint, on the row it shares with
+				// the key hints and version, which the bare "esc interrupt" check rejects.
+				`re:[■⬝]{3,}\s+esc interrupt`,
 				"esc interrupt",
 				"esc to exit",
 				"thinking...",
