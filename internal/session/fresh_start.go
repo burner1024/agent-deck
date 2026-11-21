@@ -98,6 +98,27 @@ func codexFreshStartObservable(command string) bool {
 	return true
 }
 
+// codexWrapperObservable accepts no wrapper, or one that only appends those
+// switches to the command: `launch -cmd 'codex --yolo'` keeps "{command} --yolo".
+// Any other wrapper may run Codex elsewhere or give it a prompt.
+func codexWrapperObservable(i *Instance) bool {
+	wrapper := i.Wrapper
+	if wrapper == "" {
+		if toolDef := GetToolDef(i.Tool); toolDef != nil {
+			wrapper = toolDef.Wrapper
+		}
+	}
+	wrapper = strings.TrimSpace(wrapper)
+	if wrapper == "" {
+		return true
+	}
+	rest, ok := strings.CutPrefix(wrapper, wrapperPlaceholder)
+	if !ok || (rest != "" && rest[0] != ' ') {
+		return false
+	}
+	return codexFreshStartObservable("codex" + rest)
+}
+
 // freshStartObservable reports whether claudeCmd runs the claude binary itself
 // (bare or a path), with no alias (#1822 F3, e.g. cdw) or inline env before
 // it, which may pick a config dir the transcript lookup and hooks do not see.
@@ -117,7 +138,7 @@ func noteFreshStart(i *Instance, now time.Time) {
 		return
 	}
 	if IsCodexCompatible(i.Tool) {
-		if i.notLocal() || i.hasEffectiveWrapper() {
+		if i.SSHHost != "" || i.IsSandboxed() || !codexWrapperObservable(i) {
 			return
 		}
 		turn := readFreshStartCodexTurn(i.ID)

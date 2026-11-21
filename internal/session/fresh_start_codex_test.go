@@ -77,6 +77,18 @@ func TestFreshStartCodexCommandGate(t *testing.T) {
 		{name: "custom resume", command: "codex resume --last"},
 		{name: "custom fork", command: "codex fork --last"},
 		{name: "wrapper", command: "codex", setup: func(i *Instance) { i.Wrapper = "env {command}" }},
+		// `launch -cmd 'codex <switches>'` keeps the switches as a wrapper after the command.
+		{name: "switch wrapper", command: "codex", setup: func(i *Instance) {
+			i.Wrapper = "{command} --dangerously-bypass-approvals-and-sandbox"
+		}, want: true},
+		{name: "two switch wrapper", command: "codex", setup: func(i *Instance) { i.Wrapper = "{command} --yolo --full-auto" }, want: true},
+		{name: "prompt wrapper", command: "codex", setup: func(i *Instance) { i.Wrapper = "{command} 'reply pong'" }},
+		{name: "resume wrapper", command: "codex", setup: func(i *Instance) { i.Wrapper = "{command} resume --last" }},
+		{name: "glued wrapper", command: "codex", setup: func(i *Instance) { i.Wrapper = "{command}--yolo" }},
+		{name: "switch wrapper over SSH", command: "codex", setup: func(i *Instance) {
+			i.Wrapper = "{command} --yolo"
+			i.SSHHost = "build-box"
+		}},
 		{name: "SSH", command: "codex", setup: func(i *Instance) { i.SSHHost = "build-box" }},
 		{name: "sandbox", command: "codex", setup: func(i *Instance) { i.Sandbox = &SandboxConfig{Enabled: true} }},
 		{name: "bound conversation", command: "codex --yolo", setup: func(i *Instance) { i.CodexSessionID = otherConversation }},
