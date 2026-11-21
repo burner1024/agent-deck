@@ -288,6 +288,93 @@ func TestFollowClaudeContinuedIn_RefusesSymlinkedSuccessorOutsideRoot(t *testing
 	}
 }
 
+// The background supervisor that takes over after a handoff fires no hooks
+// (the .bg-worker-dropped marker), so nothing but the transcript ever names
+// the successor. The status probe must follow the continued-in record on its
+// own: bound to the dead pre-handoff transcript, it missed the successor's
+// pending background agent and the session read idle while subagents ran.
+func TestProbeBackgroundWork_FollowsContinuedInSuccessor(t *testing.T) {
+	const (
+		oldID = "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1"
+		newID = "d2d2d2d2-d2d2-4d2d-8d2d-d2d2d2d2d2d2"
+	)
+	cases := []struct {
+		name string
+		// foreign puts the successor transcript in another project directory.
+		foreign bool
+		// disowned marks the bound id as a disk-scan guess (#1815): not owned.
+		disowned bool
+		// cliProcess registers no global StateDB, like `agent-deck list --json`:
+		// the rebind must still reach the profile DB the instance came from.
+		cliProcess  bool
+		wantID      string
+		wantRunning bool
+	}{
+		{name: "rebinds and sees the successor's agent", wantID: newID, wantRunning: true},
+		{name: "rebind persists from a cli process", cliProcess: true, wantID: newID, wantRunning: true},
+		{name: "successor in another project is not followed", foreign: true, wantID: oldID},
+		{name: "id the instance does not own is not followed", disowned: true, wantID: oldID},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			projectPath, dir := setupContinuedInProject(t)
+			db := withTempGlobalStateDB(t)
+			if tc.cliProcess {
+				statedb.SetGlobal(nil) // withTempGlobalStateDB's cleanup restores it
+			}
+			writeContinuedInTranscript(t, dir, oldID, newID)
+			successorDir := dir
+			if tc.foreign {
+				successorDir = filepath.Join(filepath.Dir(dir), "-elsewhere")
+				if err := os.MkdirAll(successorDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			now := time.Now().UTC().Format(time.RFC3339Nano)
+			successor := strings.Join([]string{
+				`{"type":"user","sessionId":"` + newID + `","message":{"role":"user","content":"go"}}`,
+				`{"type":"user","isSidechain":false,"timestamp":"` + now + `","toolUseResult":{"agentId":"ab0b","isAsync":true,"status":"async_launched","description":"review"},"message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"launched"}]}}`,
+				`{"type":"system","subtype":"turn_duration","isSidechain":false,"timestamp":"` + now + `","pendingBackgroundAgentCount":1}`,
+			}, "\n") + "\n"
+			if err := os.WriteFile(filepath.Join(successorDir, newID+".jsonl"), []byte(successor), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			inst := NewInstanceWithTool("handoff-status", projectPath, "claude")
+			inst.ClaudeSessionID = oldID
+			inst.hookLagDB = db // what storage sets on a loaded row
+			if tc.disowned {
+				inst.markClaudeSessionIDFromDiskScan(oldID)
+			}
+			if err := db.SaveInstance(&statedb.InstanceRow{
+				ID: inst.ID, Title: inst.Title, ProjectPath: inst.ProjectPath, GroupPath: inst.GroupPath,
+				Tool: "claude", Status: "idle", CreatedAt: time.Now(),
+				ToolData: json.RawMessage(`{"claude_session_id":"` + oldID + `"}`),
+			}); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+
+			work := inst.probeBackgroundWork(tmux.BackgroundWork{})
+
+			inst.mu.RLock()
+			gotID := inst.ClaudeSessionID
+			inst.mu.RUnlock()
+			if gotID != tc.wantID {
+				t.Fatalf("ClaudeSessionID = %q, want %q", gotID, tc.wantID)
+			}
+			if got := readClaudeSessionIDFromDB(t, db, inst.ID); got != tc.wantID {
+				t.Fatalf("stored claude_session_id = %q, want %q: a fresh process would load the wrong id", got, tc.wantID)
+			}
+			if work.Running() != tc.wantRunning {
+				t.Fatalf("probe work = %+v, running %v, want %v", work, work.Running(), tc.wantRunning)
+			}
+			if tc.wantRunning && (work.Kind != tmux.BackgroundKindAgent || work.Task != "review") {
+				t.Fatalf("probe work = %+v, want the successor's background agent \"review\"", work)
+			}
+		})
+	}
+}
+
 // followClaudeContinuedIn runs from buildClaudeResumeCommand without i.mu
 // while UpdateStatus reads claudeSupersededIDs and ClaudeSessionID under it.
 // Run with -race: the rebind must take the lock.
