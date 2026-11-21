@@ -686,7 +686,7 @@ type Instance struct {
 	linkedClaudeSessionID       string      // Last Claude id confirmClaudeSessionLink wrote a session_links row for
 	skipRecoveryTurn            bool        // SkipConductorRecoveryTurn: the next spawn sends no recovery turn
 	restartReason               string      // SetRestartReason: why the next restart happens, for its resume note
-	launchesFresh               atomic.Bool // the Claude command last built starts a new conversation (#2954, fresh_start.go)
+	launchesFresh               atomic.Bool // the command last built starts a new conversation (#2954, fresh_start.go)
 	launchUnrecorded            atomic.Bool // the last launch found no row for its launched tool: the first save writes it
 	configDirLeftToCommand      bool        // the export prefix last built left CLAUDE_CONFIG_DIR to the command (#1822 F3; noteFreshStart)
 	codexStartedGeneration      string
