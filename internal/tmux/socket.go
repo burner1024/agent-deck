@@ -350,6 +350,16 @@ func (s *Session) runBoundedOutput(args ...string) ([]byte, error) {
 	return runBoundedOutput(s.SocketName, args...)
 }
 
+// PaneStartCommand returns the command the session's pane was started with
+// (#{pane_start_command}).
+func (s *Session) PaneStartCommand() (string, error) {
+	out, err := s.runBoundedOutput("display-message", "-p", "-t", s.Name+":", "#{pane_start_command}")
+	if err != nil {
+		return "", fmt.Errorf("reading the start command of %s: %w", s.Name, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // runBoundedRun is the per-Session convenience wrapper for status/option
 // commands that produce no output.
 func (s *Session) runBoundedRun(args ...string) error {

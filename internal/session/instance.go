@@ -670,6 +670,7 @@ type Instance struct {
 	// carrying one must not revert ClaudeSessionID to the stalled copy.
 	claudeSupersededIDs         map[string]struct{}
 	hookLastUpdate              time.Time   // When hook status was last received
+	hookReceivedAt              time.Time   // Precise receive order from the hook record
 	acknowledgedAt              time.Time   // When the user last marked this session seen (from SQLite on load)
 	linkedClaudeSessionID       string      // Last Claude id confirmClaudeSessionLink wrote a session_links row for
 	skipRecoveryTurn            bool        // SkipConductorRecoveryTurn: the next spawn sends no recovery turn
@@ -799,6 +800,15 @@ type Instance struct {
 	// the hook-lag record alone (no capture of its own), so a busy frame the
 	// same pass captures afterwards can revert it (review round 3 P2-3).
 	hookLagFlipped bool
+
+	// The turn the stored row records as acknowledged, and the record this
+	// object last applied (attach_ack.go): a hook event (unix seconds) for
+	// hook tools, the project's latest session update (unix milliseconds) for
+	// OpenCode.
+	ackedHookTS          int64
+	ackedHookApplied     int64
+	ackedOpenCodeUpdated int64
+	ackedOpenCodeApplied int64
 
 	// Background work (issue #2473, background_work.go). bgWork is the last
 	// merged pane+transcript verdict; bgWorkActive marks a running status that
@@ -2493,6 +2503,7 @@ func (i *Instance) updateStatus(pass *StatusUpdatePass, syncMetadata bool) error
 			i.hookStatus = hs.Status
 			i.hookEvent = hs.Event
 			i.hookLastUpdate = hs.UpdatedAt
+			i.hookReceivedAt = hs.ReceivedAt
 			i.hookSessionID = hs.SessionID
 			// #1846: a disk-read hook sample is activity evidence too.
 			// Flushed by this function's persistLastActivity defer.
@@ -2521,6 +2532,7 @@ func (i *Instance) updateStatus(pass *StatusUpdatePass, syncMetadata bool) error
 			i.shouldRejectCodexUnbackedTurnEnd(i.hookSessionID, i.hookEvent)) {
 		i.hookStatus, i.hookEvent, i.hookSessionID = "", "", ""
 		i.hookLastUpdate = time.Time{}
+		i.hookReceivedAt = time.Time{}
 	}
 
 	// Issue #2853: the pane exists here, so a "dead" hook (SessionEnd) from
@@ -2530,7 +2542,9 @@ func (i *Instance) updateStatus(pass *StatusUpdatePass, syncMetadata bool) error
 	if HookDeadFromEarlierSpawn(i.ID, i.hookStatus, i.hookLastUpdate) {
 		i.hookStatus, i.hookEvent, i.hookSessionID = "", "", ""
 		i.hookLastUpdate = time.Time{}
+		i.hookReceivedAt = time.Time{}
 	}
+	i.applyAcknowledgedHookLocked()
 
 	// HOOK FAST PATH: hook-based status for tools that emit lifecycle events.
 	// Freshness is tool- and state-specific (e.g. Codex running vs waiting).
@@ -2598,7 +2612,7 @@ func (i *Instance) updateStatus(pass *StatusUpdatePass, syncMetadata bool) error
 				// it was marked unread since (another TUI, the CLI or web
 				// clears the mark without this instance's visit time).
 				if i.tmuxSession != nil && i.tmuxSession.IsAcknowledged() &&
-					HookPredatesVisit(i.hookLastUpdate, time.Time{}, i.acknowledgedAt) {
+					HookPredatesVisit(i.hookLastUpdate, i.hookReceivedAt, i.acknowledgedAt) {
 					i.Status = StatusIdle
 				} else {
 					if i.tmuxSession != nil {
