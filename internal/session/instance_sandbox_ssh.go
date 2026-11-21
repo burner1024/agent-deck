@@ -310,6 +310,14 @@ func (i *Instance) prepareCommand(cmd string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+	// Stamp after wrapper substitution so a wrapper that owns the pane also
+	// receives the owning tool. Keep this inside the remote/container boundary.
+	// Shell panes receive their tool through the launch environment instead.
+	if wrapped != "" && i.Tool != "shell" {
+		if toolExport := i.toolEnvExport(); toolExport != "" {
+			wrapped = toolExport + "; " + wrapped
+		}
+	}
 
 	// Wrap the fully-substituted command under bash -c when a wrapper is
 	// configured. This keeps shell metacharacters (&&, $(), inline env) in the
