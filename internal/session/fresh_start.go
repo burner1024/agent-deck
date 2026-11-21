@@ -7,10 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/asheshgoplani/agent-deck/internal/shellwords"
 	"github.com/asheshgoplani/agent-deck/internal/tmux"
 )
 
-// A fresh Claude start (`launch`, `session start`) reaches its empty prompt
+// A fresh Claude or Codex start (`launch`, `session start`) reaches its empty prompt
 // before its kickoff is typed. With no transcript yet, that edge took
 // emitTurn's legacy branch and reached the parent as urgent: its Stop hook
 // blocked on "<child>: idle" and a conductor woke for nothing (#2954). It is
@@ -39,6 +40,11 @@ import (
 // or the TUI removing the hook file on attach-return cannot hide it. A token
 // an older binary wrote, with no turn_seq, is judged by the rules before it
 // (freshStartTurnSeenLegacy) until it is spent or ages out.
+//
+// Codex records its own start/completion identity instead of turn_seq. It
+// has no boot hook, so only an empty prompt before any observed run since
+// the start, within the boot timeout, can be boot. A changed hook identity
+// or an observed run spends its token even when notify was dropped.
 
 // freshStartDir holds the tokens under the runtime data dir.
 const freshStartDir = "fresh-start"
@@ -52,6 +58,44 @@ type freshStartToken struct {
 	// lower one), and either way something happened. Nil on a token written
 	// before the judge read it: one at 0 left the field out.
 	TurnSeq *uint64 `json:"turn_seq,omitempty"`
+	// Codex records the start/completion identity, not the generic hook
+	// sequence, which also advances for events unrelated to turns.
+	Codex *freshStartCodexTurn `json:"codex,omitempty"`
+}
+
+type freshStartCodexTurn struct {
+	StartedSequence     uint64 `json:"started_sequence"`
+	CompletedSequence   uint64 `json:"completed_sequence"`
+	StartedGeneration   string `json:"started_generation"`
+	CompletedGeneration string `json:"completed_generation"`
+}
+
+func readFreshStartCodexTurn(id string) freshStartCodexTurn {
+	if hs := readHookStatusFile(id); hs != nil {
+		return freshStartCodexTurn{
+			StartedSequence: hs.CodexStartedSequence, CompletedSequence: hs.CodexCompletedSequence,
+			StartedGeneration: hs.CodexStartedGeneration, CompletedGeneration: hs.CodexCompletedGeneration,
+		}
+	}
+	return freshStartCodexTurn{}
+}
+
+// codexFreshStartObservable accepts only a direct binary and known switches
+// that cannot supply a prompt or resume a conversation. Uncertain arguments
+// stay on the news path rather than risk hiding a completed turn.
+func codexFreshStartObservable(command string) bool {
+	words, ok := shellwords.Split(command)
+	if !ok || len(words) == 0 || filepath.Base(words[0]) != "codex" {
+		return false
+	}
+	for _, word := range words[1:] {
+		switch word {
+		case "--dangerously-bypass-approvals-and-sandbox", "--yolo", "--full-auto":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // freshStartObservable reports whether claudeCmd runs the claude binary itself
@@ -65,11 +109,22 @@ func freshStartObservable(claudeCmd string) bool {
 
 // noteFreshStart writes i's token before the spawn when the command just built
 // starts a new conversation (launchesFresh, consumed here) whose turns this
-// host sees (claudeTurnSeqObservable). Otherwise it removes a stale one.
+// host sees. Otherwise it removes a stale one.
 func noteFreshStart(i *Instance, now time.Time) {
 	fresh := i.launchesFresh.Swap(false)
 	clearFreshStartToken(i.ID)
-	if !fresh || !claudeTurnSeqObservable(i) {
+	if !fresh {
+		return
+	}
+	if IsCodexCompatible(i.Tool) {
+		if i.notLocal() || i.hasEffectiveWrapper() {
+			return
+		}
+		turn := readFreshStartCodexTurn(i.ID)
+		writeTokenFile(freshStartDir, i.ID, ".json", freshStartToken{At: now, Codex: &turn})
+		return
+	}
+	if !claudeTurnSeqObservable(i) {
 		return
 	}
 	seq := readHookTurnSeq(i.ID)
@@ -140,8 +195,11 @@ func hookEventSince(hs *HookStatus, tok freshStartToken) bool {
 // freshStartTurnSeen reports a turn since the start: the hook file's
 // turn_seq is not the token's (higher: a turn; lower: the hook file was
 // recreated, so something happened), or the conversation moved. A token with
-// no turn_seq is judged by freshStartTurnSeenLegacy.
+// no turn_seq or Codex identity is judged by freshStartTurnSeenLegacy.
 func freshStartTurnSeen(inst *Instance, tok freshStartToken) bool {
+	if tok.Codex != nil {
+		return readFreshStartCodexTurn(inst.ID) != *tok.Codex
+	}
 	if tok.TurnSeq == nil {
 		return freshStartTurnSeenLegacy(inst, tok)
 	}
@@ -222,13 +280,22 @@ const (
 // unchanged, looking like the boot. The boot timeout
 // bounds both waits: past it the empty prompt or an unrecognised pane spends
 // the token and is news, so a later prompt adds no line after it.
-func judgeFreshStart(inst *Instance, to string, ts time.Time, substate string) (freshStartToken, freshStartVerdict) {
+func (d *TransitionDaemon) judgeFreshStart(profile string, inst *Instance, to string, ts time.Time, substate string) (freshStartToken, freshStartVerdict) {
 	tok, ok := readFreshStartToken(inst.ID)
 	if !ok || ts.Before(tok.At.Truncate(time.Second)) {
 		return tok, freshStartNews
 	}
 	st := normalizeStatusString(to)
-	if st == string(StatusError) || freshStartTurnSeen(inst, tok) {
+	// Codex has no SessionStart proof that its hooks fire. An observed run
+	// since the start is news even if notify was dropped and the hook identity
+	// stayed unchanged. Prefer an extra wake over hiding that turn's end.
+	codexRan := false
+	if tok.Codex != nil {
+		if tr := d.codexTrack(profile, inst.ID, false); tr != nil {
+			codexRan = !tr.lastRunning.IsZero() && !tr.lastRunning.Before(tok.At)
+		}
+	}
+	if st == string(StatusError) || freshStartTurnSeen(inst, tok) || codexRan {
 		spendFreshStartToken(inst.ID, tok)
 		return tok, freshStartNews
 	}
@@ -241,6 +308,13 @@ func judgeFreshStart(inst *Instance, to string, ts time.Time, substate string) (
 	expired := time.Since(tok.At) > restartBootTimeout()
 	switch tmux.Substate(substate) {
 	case tmux.SubstateIdleAtEmptyPrompt:
+		if tok.Codex != nil {
+			if expired {
+				spendFreshStartToken(inst.ID, tok)
+				return tok, freshStartNews
+			}
+			return tok, freshStartBoot
+		}
 		if freshStartHooksSeen(inst, tok) {
 			return tok, freshStartBoot
 		}

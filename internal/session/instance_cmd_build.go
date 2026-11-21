@@ -1171,6 +1171,7 @@ func (i *Instance) ResolvedCodexHome() string {
 // Resume: codex resume <session-id> or codex resume --last
 // Also sources .env files from [shell].env_files
 func (i *Instance) buildCodexCommand(baseCommand string) string {
+	i.launchesFresh.Store(false)
 	if !IsCodexCompatible(i.Tool) {
 		return baseCommand
 	}
@@ -1196,6 +1197,7 @@ func (i *Instance) buildCodexCommand(baseCommand string) string {
 	// get the full treatment regardless of their command name.
 	trimmed := strings.TrimSpace(baseCommand)
 	if i.Tool == "codex" && trimmed != "codex" && trimmed != "" {
+		i.launchesFresh.Store(i.CodexSessionID == "" && !i.IsForkAwaitingStart && codexFreshStartObservable(trimmed))
 		return envPrefix + trimmed
 	}
 	if codexHome := i.codexHomeToExport(); codexHome != "" {
@@ -1275,6 +1277,7 @@ func (i *Instance) buildCodexCommand(baseCommand string) string {
 			command, yoloFlag, modelFlag, reasoningFlag, identityFlag, shellescape.Quote(i.CodexSessionID))
 	}
 
+	i.launchesFresh.Store(!i.IsForkAwaitingStart && codexFreshStartObservable(command))
 	return envPrefix + command + yoloFlag + modelFlag + reasoningFlag + identityFlag
 }
 
@@ -1334,6 +1337,7 @@ func (i *Instance) buildCodexCommandWithPrompt(baseCommand, prompt string) (stri
 	if i.CodexSessionID != "" {
 		return command, false
 	}
+	i.launchesFresh.Store(false) // An embedded kickoff starts a turn immediately.
 	return command + " " + shellescape.Quote(prompt), true
 }
 
