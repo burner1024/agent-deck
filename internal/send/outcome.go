@@ -307,7 +307,7 @@ func NewObserver(tool, message string, baseline PaneCapture) *Observer {
 	if baseline.OK {
 		o.baselineOK = true
 		o.baselineCount, o.baselineMarkers = o.counts(baseline.Raw)
-		o.baselineHeld = HasUnsentComposerPrompt(tmux.StripANSI(baseline.Raw), message)
+		o.baselineHeld = ComposerHoldsUnsentMessage(baseline.Raw, message, tmux.StripANSI)
 		o.baselineCodexCells = codexTranscriptCopies(tmux.StripANSI(baseline.Raw), o.token)
 	}
 	return o
@@ -389,11 +389,11 @@ func (o *Observer) composerHolds(raw string) bool {
 	if (visible || o.ClaudeLike) && ComposerPasteMarkerCount(raw, tmux.StripANSI) > o.baselineMarkers {
 		return true
 	}
-	content := tmux.StripANSI(raw)
-	return !o.baselineHeld && (HasUnsentComposerPrompt(content, o.message) || composerHoldsWrappedBody(content, o.message))
+	return !o.baselineHeld && ComposerHoldsUnsentMessage(raw, o.message, tmux.StripANSI)
 }
 
-// composerHoldsWrappedBody catches the body a tall composer wraps past the
+// composerHoldsWrappedBody is the fallback for layouts without a bounded
+// input box. It catches the body a tall composer wraps past the
 // window CurrentComposerPrompt scans: everything from the LAST prompt-marker
 // line to the bottom of the pane, whitespace-collapsed, still contains the
 // whole message. An empty marker line at the bottom (a cleared composer

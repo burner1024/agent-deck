@@ -265,5 +265,23 @@ func ComposerHoldsUnsentMessage(raw, message string, strip func(string) string) 
 	if ComposerBodyIsSuggestion(raw) {
 		return false
 	}
-	return HasUnsentComposerPrompt(orIdentity(strip)(raw), message)
+	strip = orIdentity(strip)
+	// Read the same complete input box as the draft guard. A blank row or
+	// a prompt glyph in the body does not end the text being checked.
+	if body, ok := ClaudeComposerFullBody(raw, strip); ok {
+		want, draft := NormalizePromptText(message), NormalizePromptText(body)
+		const minWrappedPrefixLen = 16
+		// Soft wraps can split a word. Keep short matches word-aware so
+		// unrelated text cannot match just by removing its spaces.
+		if compact := collapse(want); len(compact) >= minWrappedPrefixLen {
+			want, draft = compact, collapse(draft)
+		}
+		if want == "" || draft == "" {
+			return false
+		}
+		return strings.Contains(draft, want) ||
+			(len(draft) >= minWrappedPrefixLen && strings.HasPrefix(want, draft))
+	}
+	content := strip(raw)
+	return HasUnsentComposerPrompt(content, message) || composerHoldsWrappedBody(content, message)
 }
