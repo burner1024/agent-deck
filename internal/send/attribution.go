@@ -192,6 +192,10 @@ func ComposerHoldsPasteMarker(raw string, strip func(string) string) bool {
 //     never go away: one more than before is still this send's.
 func ComposerPasteMarkerCount(raw string, strip func(string) string) int {
 	strip = orIdentity(strip)
+	// A paste marker can follow a blank paragraph inside the input box.
+	if body, ok := ClaudeComposerFullBody(raw, strip); ok {
+		return CountPasteMarkers(body)
+	}
 	draft, visible := ComposerDraft(raw, strip)
 	if !visible {
 		return CountPasteMarkers(strip(raw))
