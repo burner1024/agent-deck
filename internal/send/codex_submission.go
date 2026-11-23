@@ -10,9 +10,10 @@ import (
 //
 // Codex 0.15x draws its composer and every user message in the transcript the
 // same way: "›" at column 0, wrapped and multi-line continuations indented two
-// columns. The composer is the last such cell; the cells above it are the
-// transcript. When Codex takes a message it moves it out of the composer into
-// a transcript cell and, while the turn runs, shows its live status row
+// columns. A cell followed by transcript output is a submitted message; the
+// last cell without such output is the composer. When Codex takes a message
+// it moves it out of the composer into a transcript cell and, while the turn
+// runs, shows its live status row
 // ("• Working (6s • esc to interrupt)") above the composer. A lane that was
 // already working shows that row too, which is why the transcript cell and
 // the live row are each read together with "the composer no longer holds
@@ -79,16 +80,16 @@ func startsIndented(row string) bool {
 	return strings.HasPrefix(row, "  ")
 }
 
-// codexTranscriptCopies counts transcript cells (every cell but the last,
-// which is the composer) that begin with token and are followed by
-// transcript rows.
+// codexTranscriptCopies counts cells that begin with token and are followed
+// by transcript rows. The last cell also counts when the composer is absent
+// from the capture but a reply or live turn row follows the user message.
 func codexTranscriptCopies(content, token string) int {
 	if token == "" {
 		return 0
 	}
 	cells := codexCells(content)
 	n := 0
-	for i := 0; i < len(cells)-1; i++ {
+	for i := 0; i < len(cells); i++ {
 		if cells[i].followedByTranscript && strings.HasPrefix(cells[i].text, token) {
 			n++
 		}
@@ -118,7 +119,8 @@ func codexQueuedHolds(content, token string) bool {
 // codexTookMessage reports whether an ANSI-stripped Codex frame shows Codex
 // took this send's message. A new copy of the body must be on screen (copies
 // above baselineCopies, the whole-frame token counts after and before the
-// send) and the composer (last "›" cell) must not hold it. Then either a new
+// send) and the composer must not hold it. A last cell followed by transcript
+// rows is a submitted user turn, not a composer. Then either a new
 // transcript cell carries it (more than baselineCells), or it is not parked
 // in the queued list and Codex's live status row shows a turn running.
 func codexTookMessage(content, token string, copies, baselineCopies, baselineCells int) bool {
@@ -129,7 +131,8 @@ func codexTookMessage(content, token string, copies, baselineCopies, baselineCel
 	if len(cells) == 0 {
 		return false
 	}
-	if composer := cells[len(cells)-1].text; strings.Contains(composer, token) || CountPasteMarkers(composer) > 0 {
+	last := cells[len(cells)-1]
+	if !last.followedByTranscript && (strings.Contains(last.text, token) || CountPasteMarkers(last.text) > 0) {
 		return false
 	}
 	if codexTranscriptCopies(content, token) > baselineCells {
