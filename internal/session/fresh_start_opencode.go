@@ -45,8 +45,8 @@ func readOpenCodeTurn(id string) openCodeTurnObservation {
 	return obs
 }
 
-// Sync and Stop hold the watcher lock and revoke proof before cancellation,
-// so cancelled streams never need a late write to the runtime directory.
+// The subscription owner holds both its file lock and watcher mutex until
+// proof is revoked. A competing watcher cannot revoke another owner's proof.
 func revokeOpenCodeBootProof(id string) {
 	obs := readOpenCodeTurn(id)
 	if obs.Ready {
