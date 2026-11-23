@@ -661,9 +661,15 @@ func transitionEventOutputHash(inst *Instance) string {
 
 // transitionContentSignal returns a stable signal for the child's logical turn.
 // Claude uses the append-only transcript size; Codex uses its persisted hook
-// generation or sequence. Returns "" when neither source is available, which
+// generation or sequence; OpenCode uses its persisted SSE turn identity.
+// Returns "" when none of these sources is available, which
 // routes the caller to the legacy 90-second window.
 func transitionContentSignal(inst *Instance) string {
+	if inst.Tool == "opencode" && !inst.notLocal() && !inst.hasEffectiveWrapper() {
+		if obs := readOpenCodeTurn(inst.ID); obs.CompletedID != "" {
+			return "opencode-turn:" + obs.CompletedID
+		}
+	}
 	if signal := codexTurnSignal(inst); signal != "" {
 		return signal
 	}

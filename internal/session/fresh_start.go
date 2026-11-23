@@ -52,6 +52,8 @@ type freshStartToken struct {
 	// lower one), and either way something happened. Nil on a token written
 	// before the judge read it: one at 0 left the field out.
 	TurnSeq *uint64 `json:"turn_seq,omitempty"`
+	// OpenCode records a message or execution identity, not stream liveness.
+	OpenCode *freshStartOpenCodeTurn `json:"opencode,omitempty"`
 }
 
 // freshStartObservable reports whether claudeCmd runs the claude binary itself
@@ -69,7 +71,19 @@ func freshStartObservable(claudeCmd string) bool {
 func noteFreshStart(i *Instance, now time.Time) {
 	fresh := i.launchesFresh.Swap(false)
 	clearFreshStartToken(i.ID)
-	if !fresh || !claudeTurnSeqObservable(i) {
+	if !fresh {
+		return
+	}
+	if i.Tool == "opencode" {
+		if i.notLocal() || i.hasEffectiveWrapper() {
+			return
+		}
+		previous := readOpenCodeTurn(i.ID)
+		writeTokenFile(openCodeTurnDir, i.ID, ".json", openCodeTurnObservation{At: now, TurnID: previous.TurnID})
+		writeTokenFile(freshStartDir, i.ID, ".json", freshStartToken{At: now, OpenCode: &freshStartOpenCodeTurn{TurnID: previous.TurnID}})
+		return
+	}
+	if !claudeTurnSeqObservable(i) {
 		return
 	}
 	seq := readHookTurnSeq(i.ID)
@@ -140,8 +154,12 @@ func hookEventSince(hs *HookStatus, tok freshStartToken) bool {
 // freshStartTurnSeen reports a turn since the start: the hook file's
 // turn_seq is not the token's (higher: a turn; lower: the hook file was
 // recreated, so something happened), or the conversation moved. A token with
-// no turn_seq is judged by freshStartTurnSeenLegacy.
+// no turn_seq or OpenCode identity is judged by freshStartTurnSeenLegacy.
 func freshStartTurnSeen(inst *Instance, tok freshStartToken) bool {
+	if tok.OpenCode != nil {
+		obs := readOpenCodeTurn(inst.ID)
+		return obs.At.Equal(tok.At) && (obs.Ran || obs.TurnID != tok.OpenCode.TurnID)
+	}
 	if tok.TurnSeq == nil {
 		return freshStartTurnSeenLegacy(inst, tok)
 	}
@@ -239,6 +257,19 @@ func judgeFreshStart(inst *Instance, to string, ts time.Time, substate string) (
 		substate = restartPaneSubstate(inst)
 	}
 	expired := time.Since(tok.At) > restartBootTimeout()
+	if tok.OpenCode != nil {
+		if expired {
+			spendFreshStartToken(inst.ID, tok)
+			return tok, freshStartNews
+		}
+		if tmux.Substate(substate) == tmux.SubstateIdleAtEmptyPrompt {
+			obs := readOpenCodeTurn(inst.ID)
+			if obs.At.Equal(tok.At) && obs.Ready && time.Since(obs.ObservedAt) < opencodeSSEFreshnessWindow {
+				return tok, freshStartBoot
+			}
+			return tok, freshStartNotYet
+		}
+	}
 	switch tmux.Substate(substate) {
 	case tmux.SubstateIdleAtEmptyPrompt:
 		if freshStartHooksSeen(inst, tok) {

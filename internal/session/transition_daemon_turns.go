@@ -76,6 +76,13 @@ func (d *TransitionDaemon) emitTurnInner(profile string, inst *Instance, byID ma
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
+	// The stored pane status can lag a newly started SSE turn. Wait for the
+	// all-idle observation before publishing that turn's completion.
+	if inst.Tool == "opencode" && !inst.notLocal() && !inst.hasEffectiveWrapper() && normalizeStatusString(to) != string(StatusError) {
+		if obs := readOpenCodeTurn(inst.ID); obs.Running && time.Since(obs.ObservedAt) < opencodeSSEFreshnessWindow {
+			return event, false
+		}
+	}
 
 	facts, classified := instanceTurnFacts(inst)
 	if classified && facts.Pending {
