@@ -874,6 +874,7 @@ func (i *Instance) buildGeminiCommand(baseCommand string) string {
 // Agent: opencode --agent name
 // Also sources .env files from [shell].env_files
 func (i *Instance) buildOpenCodeCommand(baseCommand string) string {
+	i.launchesFresh.Store(false)
 	if i.Tool != "opencode" {
 		return baseCommand
 	}
@@ -885,6 +886,7 @@ func (i *Instance) buildOpenCodeCommand(baseCommand string) string {
 		baseCommand = i.openCodePersistentCommand()
 	}
 	if cmd, ok := i.openCodeLauncher(baseCommand); ok {
+		i.launchesFresh.Store(openCodeFreshStartObservable(i, cmd))
 		var extraFlags string
 		if i.openCodeRejectsV1LaunchFlags() {
 			// V2 uses the shared service instead of a per-TUI --port server.

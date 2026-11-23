@@ -50,6 +50,7 @@ import (
 type OpenCodeSSEStatus struct {
 	Status    string    // "running" or "waiting"
 	UpdatedAt time.Time // last time the stream confirmed this status
+	TurnID    string    // message ID (1.x) or execution event ID (2.x)
 }
 
 // SSETarget identifies one OpenCode instance's event server.
@@ -164,6 +165,7 @@ func (w *OpenCodeSSEWatcher) Sync(targets []SSETarget) {
 
 	for id, conn := range w.conns {
 		if t, ok := want[id]; !ok || t.Port != conn.port || t.sessionID != conn.sessionID {
+			revokeOpenCodeBootProof(id)
 			conn.cancel()
 			delete(w.conns, id)
 			delete(w.statuses, id)
@@ -216,6 +218,7 @@ func (w *OpenCodeSSEWatcher) Stop() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for id, conn := range w.conns {
+		revokeOpenCodeBootProof(id)
 		conn.cancel()
 		delete(w.conns, id)
 	}
@@ -253,10 +256,16 @@ func (w *OpenCodeSSEWatcher) run(ctx context.Context, instanceID string, resolve
 // openCodeEvent is the SSE payload shape (verified against the OpenCode
 // server's OpenAPI doc: Event.session.status / Event.session.idle).
 type openCodeEvent struct {
+	ID         string `json:"id"`
 	Type       string `json:"type"`
 	Properties struct {
 		SessionID string `json:"sessionID"`
-		Status    struct {
+		Info      struct {
+			ID        string `json:"id"`
+			SessionID string `json:"sessionID"`
+			Role      string `json:"role"`
+		} `json:"info"`
+		Status struct {
 			Type string `json:"type"` // "idle" | "busy" | "retry"
 		} `json:"status"`
 	} `json:"properties"`
@@ -308,9 +317,21 @@ func (w *OpenCodeSSEWatcher) stream(ctx context.Context, instanceID string, src 
 	if resp.StatusCode != http.StatusOK {
 		return false
 	}
+	// Subscribe before proving an empty history: a turn during the snapshot
+	// remains buffered in this connection rather than disappearing in the gap.
+	streamID := time.Now().UTC().Format(time.RFC3339Nano)
+	w.observeOpenCodeTurn(ctx, instanceID, streamID, true, nil)
+	if len(busy) > 0 {
+		w.observeOpenCodeTurn(ctx, instanceID, streamID, false, func(obs *openCodeTurnObservation) { obs.Ran = true })
+	}
+	defer w.observeOpenCodeTurn(ctx, instanceID, streamID, false, func(obs *openCodeTurnObservation) { obs.Ready = false })
 	if src.sessionID != "" {
 		seed()
+		if len(busy) > 0 {
+			w.observeOpenCodeTurn(ctx, instanceID, streamID, false, func(obs *openCodeTurnObservation) { obs.Ran = true })
+		}
 	}
+	w.seedOpenCodeFreshStart(ctx, instanceID, streamID, src)
 
 	if src.sessionID != "" {
 		sessionLog.Debug("opencode_sse_connected",
@@ -331,6 +352,7 @@ func (w *OpenCodeSSEWatcher) stream(ctx context.Context, instanceID string, src 
 			continue
 		}
 		gotData = true
+		w.observeOpenCodeTurn(ctx, instanceID, streamID, false, nil)
 		// A counted sub-agent that is aborted, deleted or dies may never
 		// send its turn ending, and the stream's own traffic keeps the status
 		// fresh, so busy sessions are checked against session.active now and
@@ -358,6 +380,17 @@ func (w *OpenCodeSSEWatcher) stream(ctx context.Context, instanceID string, src 
 				w.touch(ctx, instanceID)
 				continue
 			}
+			if strings.HasPrefix(ev.Type, "session.execution.") {
+				w.observeOpenCodeTurn(ctx, instanceID, streamID, false, func(obs *openCodeTurnObservation) {
+					obs.Ran = true
+					if ev.Type == "session.execution.started" {
+						obs.Running = true
+					}
+					if ev.ID != "" {
+						obs.TurnID = ev.ID
+					}
+				})
+			}
 			w.setStatus(ctx, instanceID, busyStatus(busy))
 			if ev.Data.SessionID == src.sessionID && !busy[src.sessionID] && len(busy) > 0 {
 				// The bound turn ended with sub-agents still counted: check
@@ -368,9 +401,22 @@ func (w *OpenCodeSSEWatcher) stream(ctx context.Context, instanceID string, src 
 			continue
 		}
 		switch ev.Type {
+		case "message.updated":
+			info := ev.Properties.Info
+			if info.ID != "" && info.SessionID != "" && (info.Role == "user" || info.Role == "assistant") {
+				w.observeOpenCodeTurn(ctx, instanceID, streamID, false, func(obs *openCodeTurnObservation) {
+					if info.Role == "user" && info.ID != obs.TurnID {
+						obs.Running = true
+					}
+					obs.TurnID, obs.Ran = info.ID, true
+				})
+			}
+			w.touch(ctx, instanceID)
+			continue
 		case "session.status":
 			switch ev.Properties.Status.Type {
 			case "busy", "retry":
+				w.observeOpenCodeTurn(ctx, instanceID, streamID, false, func(obs *openCodeTurnObservation) { obs.Ran = true })
 				// retry = provider call being retried; still working, no
 				// input needed, so it maps to running rather than waiting.
 				busy[ev.Properties.SessionID] = true
@@ -707,7 +753,17 @@ func (w *OpenCodeSSEWatcher) setStatus(ctx context.Context, instanceID, status s
 	}
 	prev := w.statuses[instanceID]
 	changed := prev == nil || prev.Status != status
-	w.statuses[instanceID] = &OpenCodeSSEStatus{Status: status, UpdatedAt: time.Now()}
+	obs := readOpenCodeTurn(instanceID)
+	running := status == "running"
+	if obs.Running != running || (!running && obs.CompletedID != obs.TurnID) {
+		obs.Running = running
+		if !running {
+			obs.CompletedID = obs.TurnID
+		}
+		obs.ObservedAt = time.Now()
+		writeTokenFile(openCodeTurnDir, instanceID, ".json", obs)
+	}
+	w.statuses[instanceID] = &OpenCodeSSEStatus{Status: status, UpdatedAt: time.Now(), TurnID: obs.TurnID}
 	onChange := w.onChange
 	w.mu.Unlock()
 	w.writes.Add(1)
@@ -722,6 +778,7 @@ func (w *OpenCodeSSEWatcher) touch(ctx context.Context, instanceID string) {
 	w.mu.Lock()
 	if s, ok := w.statuses[instanceID]; ok && ctx.Err() == nil {
 		s.UpdatedAt = time.Now()
+		s.TurnID = readOpenCodeTurn(instanceID).TurnID
 	}
 	w.mu.Unlock()
 	w.writes.Add(1)
