@@ -55,13 +55,17 @@ func traceHookContext(instanceID string, level trace.Level, at time.Time) trace.
 // payload (redacted) and append one line to the profile's spool. No SQLite,
 // no locks, errors ignored, panics contained: tracing never fails a hook.
 func spoolTraceFromHook(instanceID string, data []byte, at time.Time) {
+	spoolTraceFromHookInProfile(instanceID, "", data, at)
+}
+
+func spoolTraceFromHookInProfile(instanceID, ownerProfile string, data []byte, at time.Time) {
 	defer func() { _ = recover() }()
 	level := traceLevel()
 	if level == trace.LevelOff {
 		return
 	}
 	ctx := traceHookContext(instanceID, level, at)
-	profile, dir, err := traceProfileDir("")
+	profile, dir, err := traceProfileDir(ownerProfile)
 	if err != nil {
 		return
 	}
@@ -119,6 +123,7 @@ func handleTrace(profile string, args []string) {
 // handleTraceHook is a trace-only hook receiver: it records the payload and
 // touches no status file, so it can be subscribed to edges the status hook
 // must not see (Claude PostToolUse) without changing session status.
+// Background jobs route to their parking instance before any trace is written.
 func handleTraceHook() {
 	instanceID := os.Getenv("AGENTDECK_INSTANCE_ID")
 	if instanceID == "" || !validInstanceID.MatchString(instanceID) || strings.Contains(instanceID, "..") {
@@ -129,7 +134,11 @@ func handleTraceHook() {
 	if err != nil || len(data) == 0 {
 		return
 	}
-	spoolTraceFromHook(instanceID, data, at)
+	ownerID, ownerProfile := hookClaudeInstance(instanceID)
+	if ownerID == "" {
+		return
+	}
+	spoolTraceFromHookInProfile(ownerID, ownerProfile, data, at)
 }
 
 // openTraceStoreIngested opens trace.db and first ingests the spool so the
