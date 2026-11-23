@@ -130,7 +130,7 @@ func (d *TransitionDaemon) emitTurnInner(profile string, inst *Instance, byID ma
 	}
 	// Issue #2954: nor is a fresh start's arrival at its empty prompt
 	// (fresh_start.go). A resuming restart leaves no fresh-start token.
-	switch ftok, verdict := judgeFreshStart(inst, to, event.Timestamp, event.Substate); verdict {
+	switch ftok, verdict := d.judgeFreshStart(profile, inst, to, event.Timestamp, event.Substate); verdict {
 	case freshStartNotYet:
 		// Only the poll pass (recordTerminalTurns) retries a false: it keeps
 		// its key uncommitted. The snapshot edge and hook candidates discard it.
