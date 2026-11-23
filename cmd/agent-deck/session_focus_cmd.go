@@ -37,7 +37,7 @@ func handleSessionAttach(profile string, args []string) {
 	identifier := fs.Arg(0)
 
 	// Load sessions
-	_, instances, _, err := loadSessionData(profile)
+	storage, instances, _, err := loadSessionData(profile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		exitCLI(1)
@@ -65,6 +65,12 @@ func handleSessionAttach(profile string, args []string) {
 	if tmuxSession == nil {
 		fmt.Fprintf(os.Stderr, "Error: no tmux session for '%s'\n", inst.Title)
 		exitCLI(1)
+	}
+
+	// Acknowledge on attach as the TUI does: a remote TUI opens a session only
+	// through this command, so without it a seen session stays waiting.
+	if err := session.AcknowledgeIfWaiting(storage.GetDB(), inst); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not mark '%s' as seen: %v\n", inst.Title, err)
 	}
 
 	// Create context for attach
