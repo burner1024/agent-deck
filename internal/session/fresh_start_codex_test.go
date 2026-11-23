@@ -81,6 +81,8 @@ func TestFreshStartCodexBoot(t *testing.T) {
 			f := newTurnTestFixture(t)
 			st := stubRestartPIDs(t)
 			st.substate = string(SubstateIdleAtEmptyPrompt)
+			// The pane is at its empty composer: the waiting-edge probe agrees.
+			f.d.codexComposerIdle = func(*Instance) bool { return true }
 			f.child.Tool = "codex"
 			f.child.ClaudeSessionID = ""
 			at := time.Now().Add(-c.age)
