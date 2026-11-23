@@ -51,8 +51,6 @@ type TransitionDaemon struct {
 	deskNotifier *desknotify.Notifier
 
 	hookWatcher *StatusFileWatcher
-	// Only Run creates watchers. A diagnostic SyncOnce owns no streams.
-	openCodeWatchers map[string]*OpenCodeSSEWatcher
 
 	storages map[string]*Storage
 
@@ -250,7 +248,6 @@ func NewTransitionDaemon() *TransitionDaemon {
 }
 
 func (d *TransitionDaemon) Run(ctx context.Context) error {
-	d.openCodeWatchers = make(map[string]*OpenCodeSSEWatcher)
 	d.ensureHookWatcher()
 	defer d.shutdown()
 
@@ -290,7 +287,6 @@ func (d *TransitionDaemon) Run(ctx context.Context) error {
 // until the next pass.
 func (d *TransitionDaemon) SyncOnce(_ context.Context) time.Duration {
 	profiles := profilesForTransitionDaemon()
-	d.pruneOpenCodeWatchers(profiles)
 	if len(profiles) == 0 {
 		return notifyPollSlow
 	}
@@ -587,7 +583,6 @@ func (d *TransitionDaemon) syncProfile(profile string) time.Duration {
 		tmux.RefreshExistingSessions()
 		tmux.RefreshPaneInfoCache()
 	}
-	d.syncOpenCodeWatcher(profile, instances)
 
 	byID := make(map[string]*Instance, len(instances))
 	hookCandidates := make(map[string]hookTransitionCandidate, len(instances))
@@ -1460,12 +1455,6 @@ func (d *TransitionDaemon) ensureHookWatcher() {
 }
 
 func (d *TransitionDaemon) shutdown() {
-	// Stop joins every stream before storage and runtime proof are released.
-	for profile, watcher := range d.openCodeWatchers {
-		watcher.Stop()
-		delete(d.openCodeWatchers, profile)
-	}
-	d.openCodeWatchers = nil
 	if d.hookWatcher != nil {
 		d.hookWatcher.Stop()
 	}

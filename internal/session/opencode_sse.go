@@ -36,17 +36,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -110,14 +106,10 @@ func openCodeSharedServiceSource(svc openCodeService, sessionID string) openCode
 
 // OpenCodeSSEWatcher manages SSE connections to OpenCode instances.
 type OpenCodeSSEWatcher struct {
-	// lifecycle serializes cancellation and joins without holding mu, which
-	// stream teardown also needs. Stop permanently closes this watcher.
-	lifecycle sync.Mutex
-	stopped   bool
-	mu        sync.Mutex
-	conns     map[string]*openCodeSSEConn // instance ID -> active connection
-	statuses  map[string]*OpenCodeSSEStatus
-	onChange  func() // optional TUI refresh callback
+	mu       sync.Mutex
+	conns    map[string]*openCodeSSEConn // instance ID -> active connection
+	statuses map[string]*OpenCodeSSEStatus
+	onChange func() // optional TUI refresh callback
 
 	// parents caches 2.x session -> parent session lookups. A link never
 	// changes, so every stream on the shared service reuses an answer, and
@@ -136,7 +128,6 @@ type openCodeSSEConn struct {
 	port      int
 	sessionID string
 	cancel    context.CancelFunc
-	done      chan struct{}
 }
 
 // NewOpenCodeSSEWatcher creates a watcher. onChange (may be nil) is invoked
@@ -160,12 +151,8 @@ func NewOpenCodeSSEWatcher(onChange func()) *OpenCodeSSEWatcher {
 // connections for new targets (or targets whose port changed after a restart)
 // and tears down connections for instances no longer present.
 func (w *OpenCodeSSEWatcher) Sync(targets []SSETarget) {
-	w.lifecycle.Lock()
-	defer w.lifecycle.Unlock()
-	if w.stopped {
-		return
-	}
 	w.mu.Lock()
+	defer w.mu.Unlock()
 
 	want := make(map[string]SSETarget, len(targets))
 	for _, t := range targets {
@@ -176,33 +163,22 @@ func (w *OpenCodeSSEWatcher) Sync(targets []SSETarget) {
 		want[t.InstanceID] = t
 	}
 
-	var removed []*openCodeSSEConn
 	for id, conn := range w.conns {
 		if t, ok := want[id]; !ok || t.Port != conn.port || t.sessionID != conn.sessionID {
+			revokeOpenCodeBootProof(id)
 			conn.cancel()
-			removed = append(removed, conn)
 			delete(w.conns, id)
 			delete(w.statuses, id)
 		}
 	}
-	w.mu.Unlock()
-	for _, conn := range removed {
-		<-conn.done
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
 
 	for id, t := range want {
 		if _, ok := w.conns[id]; ok {
 			continue
 		}
 		ctx, cancel := context.WithCancel(context.Background())
-		conn := &openCodeSSEConn{port: t.Port, sessionID: t.sessionID, cancel: cancel, done: make(chan struct{})}
-		w.conns[id] = conn
-		go func() {
-			defer close(conn.done)
-			w.run(ctx, id, t.eventSource())
-		}()
+		w.conns[id] = &openCodeSSEConn{port: t.Port, sessionID: t.sessionID, cancel: cancel}
+		go w.run(ctx, id, t.eventSource())
 	}
 }
 
@@ -237,24 +213,15 @@ func (w *OpenCodeSSEWatcher) GetStatus(instanceID string) *OpenCodeSSEStatus {
 	return &cp
 }
 
-// Stop cancels and joins all connections, including their proof revocation.
+// Stop tears down all connections.
 func (w *OpenCodeSSEWatcher) Stop() {
-	w.lifecycle.Lock()
-	defer w.lifecycle.Unlock()
-	w.stopped = true
 	w.mu.Lock()
-	var removed []*openCodeSSEConn
+	defer w.mu.Unlock()
 	for id, conn := range w.conns {
+		revokeOpenCodeBootProof(id)
 		conn.cancel()
-		removed = append(removed, conn)
 		delete(w.conns, id)
-		delete(w.statuses, id)
 	}
-	w.mu.Unlock()
-	for _, conn := range removed {
-		<-conn.done
-	}
-	w.client.CloseIdleConnections()
 }
 
 // run maintains one instance's stream with reconnect + exponential backoff.
@@ -275,12 +242,10 @@ func (w *OpenCodeSSEWatcher) run(ctx context.Context, instanceID string, resolve
 		if gotData {
 			backoff = time.Second
 		}
-		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
-			timer.Stop()
 			return
-		case <-timer.C:
+		case <-time.After(backoff):
 		}
 		if backoff *= 2; backoff > maxBackoff {
 			backoff = maxBackoff
@@ -313,19 +278,6 @@ type openCodeEvent struct {
 // stream connects to /event and consumes it until error or cancellation.
 // Returns true if any data was received (resets the caller's backoff).
 func (w *OpenCodeSSEWatcher) stream(ctx context.Context, instanceID string, src openCodeEventSource) bool {
-	// TUI and notification watchers elect one writer per child across
-	// processes. Only the lock owner subscribes or revokes durable proof;
-	// a competing watcher retries through run's existing backoff.
-	owner, err := lockOpenCodeObservation(instanceID)
-	if err != nil {
-		sessionLog.Warn("opencode_sse_ownership_failed", slog.String("instance_id", instanceID), slog.String("error", err.Error()))
-		return false
-	}
-	if owner == nil {
-		return false
-	}
-	// Closing the descriptor releases the advisory lock after all writes.
-	defer owner.Close()
 	base := src.base
 
 	// Track busy-ness per OpenCode session on this server: subagent/child
@@ -372,13 +324,7 @@ func (w *OpenCodeSSEWatcher) stream(ctx context.Context, instanceID string, src 
 	if len(busy) > 0 {
 		w.observeOpenCodeTurn(ctx, instanceID, streamID, false, func(obs *openCodeTurnObservation) { obs.Ran = true })
 	}
-	defer func() {
-		// Cancellation forbids ordinary observations, but the owner must
-		// revoke proof before releasing its lock, even on cancellation.
-		w.mu.Lock()
-		defer w.mu.Unlock()
-		revokeOpenCodeBootProof(instanceID)
-	}()
+	defer w.observeOpenCodeTurn(ctx, instanceID, streamID, false, func(obs *openCodeTurnObservation) { obs.Ready = false })
 	if src.sessionID != "" {
 		seed()
 		if len(busy) > 0 {
@@ -491,29 +437,6 @@ func (w *OpenCodeSSEWatcher) stream(ctx context.Context, instanceID string, src 
 		}
 	}
 	return gotData
-}
-
-func lockOpenCodeObservation(id string) (*os.File, error) {
-	path, err := runtimeTokenPath(openCodeTurnDir, id, ".lock")
-	if err != nil {
-		return nil, fmt.Errorf("resolve OpenCode observation lock: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("create OpenCode observation directory: %w", err)
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("open OpenCode observation lock: %w", err)
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		// No state was written; closing a contended lock needs no recovery.
-		_ = f.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("lock OpenCode observation: %w", err)
-	}
-	return f, nil
 }
 
 // applySharedServiceEvent folds one 2.x event for the bound session or one of
@@ -821,7 +744,7 @@ func (w *OpenCodeSSEWatcher) reconcileShared(ctx context.Context, instanceID str
 
 // setStatus records a derived status and fires onChange on transitions.
 // ctx is the connection's context: Sync cancels a replaced connection under
-// w.mu, then joins it outside that mutex. Late status writes are dropped here.
+// w.mu without waiting for its stream, so a late write from it is dropped here.
 func (w *OpenCodeSSEWatcher) setStatus(ctx context.Context, instanceID, status string) {
 	w.mu.Lock()
 	if ctx.Err() != nil {

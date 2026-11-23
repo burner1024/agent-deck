@@ -266,16 +266,7 @@ func TestIssue151OpenCodeBootBounds(t *testing.T) {
 			case "timeout":
 				want = freshStartNews
 			case "stop", "remove":
-				done := make(chan struct{})
-				w.conns[i.ID] = &openCodeSSEConn{cancel: cancel, done: done}
-				// Model the owning stream's cancellation and joined teardown.
-				go func() {
-					defer close(done)
-					<-ctx.Done()
-					w.mu.Lock()
-					defer w.mu.Unlock()
-					revokeOpenCodeBootProof(i.ID)
-				}()
+				w.conns[i.ID] = &openCodeSSEConn{cancel: cancel}
 				if operation == "stop" {
 					w.Stop()
 				} else {
