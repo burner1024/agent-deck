@@ -19,6 +19,9 @@ type childRow struct {
 	DoneStatus  string `json:"done_status,omitempty"`
 	DoneSummary string `json:"done_summary,omitempty"`
 	DoneAt      string `json:"done_at,omitempty"`
+	// Completion identity and fleet delivery state stay out of CLI output.
+	doneEntry    session.CompletionLedgerEntry
+	doneNotified bool
 	// BackgroundWork is the in-flight background work keeping the child
 	// running (issue #2473); omitted otherwise. Not part of the --follow diff.
 	BackgroundWork *tmux.BackgroundWork `json:"background_work,omitempty"`
@@ -92,6 +95,7 @@ func buildChildRows(kids []*session.Instance, sampling childRowsSampling) []chil
 		}
 		row := childRow{ID: k.ID, Title: k.Title, Status: StatusString(k.Status), BackgroundWork: k.BackgroundWorkJSON()}
 		if e, ok := session.ReadLedgerEntry(k.ID); ok {
+			row.doneEntry = e
 			row.DoneStatus = e.Status
 			row.DoneSummary = e.Summary
 			if !e.FinishedAt.IsZero() {
