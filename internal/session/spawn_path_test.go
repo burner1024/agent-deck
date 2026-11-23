@@ -357,7 +357,7 @@ func TestPrepareCommand_PrependsMissingUserBinDirs(t *testing.T) {
 	got, _, err := inst.prepareCommand("exec claude --session-id 1")
 	require.NoError(t, err)
 	marker := spawnToolProbeMarkerPath(inst.ID)
-	assert.Equal(t, buildSpawnPathExport([]string{localBin})+buildSpawnToolProbe("claude", marker)+"exec claude --session-id 1", got)
+	assert.Equal(t, "export AGENTDECK_TOOL=claude; "+buildSpawnPathExport([]string{localBin})+buildSpawnToolProbe("claude", marker)+"exec claude --session-id 1", got)
 	assert.Equal(t, 1, strings.Count(got, localBin), "each dir is named exactly once")
 	probeTool, probeMarker := inst.spawnToolLookup("exec claude --session-id 1")
 	assert.Equal(t, "claude", probeTool, "the watcher is told the same tool the pane probes")
@@ -374,16 +374,16 @@ func TestPrepareCommand_PrependsMissingUserBinDirs(t *testing.T) {
 	// prelude alone, and the watcher is told there is no probe.
 	got, _, err = inst.prepareCommand("[ -f ~/.env ] && . ~/.env && exec claude --session-id 1")
 	require.NoError(t, err)
-	assert.Equal(t, buildSpawnPathExport([]string{localBin})+"[ -f ~/.env ] && . ~/.env && exec claude --session-id 1", got)
+	assert.Equal(t, "export AGENTDECK_TOOL=claude; "+buildSpawnPathExport([]string{localBin})+"[ -f ~/.env ] && . ~/.env && exec claude --session-id 1", got)
 	probeTool, probeMarker = inst.spawnToolLookup("[ -f ~/.env ] && . ~/.env && exec claude --session-id 1")
 	assert.Equal(t, "", probeTool)
 	assert.Equal(t, "", probeMarker)
 
-	// Already on PATH: byte-identical command, no prelude and no probe.
+	// Already on PATH: only the owning-tool stamp, no prelude and no probe.
 	t.Setenv("PATH", "/usr/bin:"+localBin+":/bin:/opt/homebrew/bin")
 	got, _, err = inst.prepareCommand("exec claude --session-id 1")
 	require.NoError(t, err)
-	assert.Equal(t, "exec claude --session-id 1", got)
+	assert.Equal(t, "export AGENTDECK_TOOL=claude; exec claude --session-id 1", got)
 	probeTool, probeMarker = inst.spawnToolLookup("exec claude --session-id 1")
 	assert.Equal(t, "", probeTool, "no prelude, no probe: the generic reason stands")
 	assert.Equal(t, "", probeMarker)
@@ -439,7 +439,7 @@ agent_deck_path = "/home/alice/.local/bin/agent-deck"
 	// ASK-105: every SSH payload runs under bash -c on the remote (a fish/csh
 	// login shell cannot run the POSIX prelude), so the tool is the last word
 	// of the bash -c program inside the ssh argument.
-	assert.Contains(t, got, `&& bash -c '\''for __d in`, "got %q", got)
+	assert.Contains(t, got, `&& bash -c '\''export AGENTDECK_TOOL=claude; for __d in`, "got %q", got)
 	assert.True(t, strings.HasSuffix(got, "exec claude --session-id 1'\\'''"), "got %q", got)
 
 	// The prelude precedes the export prefix inside the remote program, after

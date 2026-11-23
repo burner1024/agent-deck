@@ -8,11 +8,12 @@ import (
 	"sort"
 	"strings"
 
+	"al.essio.dev/pkg/shellescape"
+
 	"github.com/asheshgoplani/agent-deck/internal/logging"
 )
 
 // buildEnvSourceCommand builds shell commands to source .env files before the main command.
-// Returns empty string if no env files or theme vars are configured.
 // Order of sourcing (later overrides earlier):
 //  1. Theme environment (COLORFGBG) for terminal-aware tools
 //     1b. Conductor channel state dir (<PLUGIN>_STATE_DIR) when unconfigured
@@ -25,6 +26,7 @@ import (
 //  8. One-shot restart overrides (`session restart --env`)
 //  9. Strip TELEGRAM_STATE_DIR (v1.7.40, S8)
 //  10. AGENTDECK_IDENTITY_FILE export (identity injection)
+//  11. Owning tool, overriding inherited and configured values
 //
 // Note: This does NOT handle [shell].launch_shell wrapping — that happens at the
 // prepareCommand layer (instance.go) after env sourcing, so the shell startup
@@ -68,6 +70,9 @@ func (i *Instance) buildEnvSourceCommand() string {
 		}
 		if identityExport := i.identityEnvExport(); identityExport != "" {
 			sources = append(sources, identityExport)
+		}
+		if toolExport := i.toolEnvExport(); toolExport != "" {
+			sources = append(sources, toolExport)
 		}
 		if len(sources) == 0 {
 			return ""
@@ -198,6 +203,9 @@ func (i *Instance) buildEnvSourceCommand() string {
 	if identityExport := i.identityEnvExport(); identityExport != "" {
 		sources = append(sources, identityExport)
 	}
+	if toolExport := i.toolEnvExport(); toolExport != "" {
+		sources = append(sources, toolExport)
+	}
 
 	if len(sources) == 0 {
 		return ""
@@ -205,6 +213,15 @@ func (i *Instance) buildEnvSourceCommand() string {
 
 	// Join all sources with && and add trailing && for the main command
 	return strings.Join(sources, " && ") + " && "
+}
+
+// toolEnvExport binds hook routing to the owning pane, independent of the
+// environment inherited from the server or supplied by environment files.
+func (i *Instance) toolEnvExport() string {
+	if i.Tool == "" {
+		return ""
+	}
+	return "export AGENTDECK_TOOL=" + shellescape.Quote(i.Tool)
 }
 
 // themeEnvExport returns a shell export command for COLORFGBG based on the
