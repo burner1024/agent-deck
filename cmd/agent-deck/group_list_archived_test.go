@@ -90,7 +90,7 @@ func TestBuildGroupListJSON_LeavesArchivedOut(t *testing.T) {
 
 			orig := groupListRefreshStatus
 			t.Cleanup(func() { groupListRefreshStatus = orig })
-			groupListRefreshStatus = func(inst *session.Instance) {
+			groupListRefreshStatus = func(_ *session.StatusUpdatePass, inst *session.Instance) {
 				if archived[inst] {
 					t.Errorf("archived session %q refreshed; it is not counted", inst.Title)
 				}
