@@ -217,7 +217,7 @@ func TestIssue151OpenCodeUnobservedTurn(t *testing.T) {
 			st.substate = string(SubstateIdleAtEmptyPrompt)
 			f.child.Tool = "opencode"
 			f.child.ClaudeSessionID = ""
-			at := time.Now().Add(-time.Second)
+			at := time.Now().Add(-openCodeInitialObservationGrace - time.Second)
 			writeTokenFile(freshStartDir, f.child.ID, ".json", freshStartToken{At: at, OpenCode: &freshStartOpenCodeTurn{}})
 			obs := openCodeTurnObservation{At: at}
 			switch state {
@@ -233,7 +233,7 @@ func TestIssue151OpenCodeUnobservedTurn(t *testing.T) {
 				writeTokenFile(openCodeTurnDir, f.child.ID, ".json", obs)
 			}
 			if _, got := judgeFreshStart(f.child, "idle", time.Now(), st.substate); got != freshStartNews {
-				t.Fatalf("unobserved turn verdict = %v, want news immediately", got)
+				t.Fatalf("unobserved turn verdict = %v, want news after observation grace", got)
 			}
 			if hasFreshStartToken(f.child.ID) {
 				t.Fatal("unobserved idle retained token")

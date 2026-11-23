@@ -259,9 +259,16 @@ func judgeFreshStart(inst *Instance, to string, ts time.Time, substate string) (
 	expired := time.Since(tok.At) > restartBootTimeout()
 	if tok.OpenCode != nil {
 		obs := readOpenCodeTurn(inst.ID)
-		// Without an observation of this start, no watcher can prove boot.
-		// Preserve the idle notification rather than wait for token expiry.
-		if expired || obs.ObservedAt.IsZero() || obs.ObservedAt.Before(tok.At) || (!obs.Ready && obs.Stream == "") {
+		// A newly spawned TUI can show idle before its event server binds.
+		// Give the first observation a bounded chance to establish boot.
+		if obs.ObservedAt.IsZero() || obs.ObservedAt.Before(tok.At) || (!obs.Ready && obs.Stream == "") {
+			if time.Since(tok.At) < openCodeInitialObservationGrace {
+				return tok, freshStartNotYet
+			}
+			spendFreshStartToken(inst.ID, tok)
+			return tok, freshStartNews
+		}
+		if expired || (!obs.Ready && time.Since(tok.At) >= openCodeInitialObservationGrace) {
 			spendFreshStartToken(inst.ID, tok)
 			return tok, freshStartNews
 		}

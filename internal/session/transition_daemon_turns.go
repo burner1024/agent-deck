@@ -79,7 +79,7 @@ func (d *TransitionDaemon) emitTurnInner(profile string, inst *Instance, byID ma
 	// The stored pane status can lag a newly started SSE turn. Wait for the
 	// all-idle observation before publishing that turn's completion.
 	if inst.Tool == "opencode" && !inst.notLocal() && !inst.hasEffectiveWrapper() && normalizeStatusString(to) != string(StatusError) {
-		if obs := readOpenCodeTurn(inst.ID); obs.Running && time.Since(obs.ObservedAt) < opencodeSSEFreshnessWindow {
+		if d.holdOpenCodeTerminal(profile, inst.ID, time.Now()) {
 			return event, false
 		}
 	}
@@ -111,7 +111,7 @@ func (d *TransitionDaemon) emitTurnInner(profile string, inst *Instance, byID ma
 	if strings.EqualFold(strings.TrimSpace(inst.Tool), "pi") {
 		event.LastOutputHash = piv.Signal // from the one snapshot; "" is the fallback
 	} else {
-		event.LastOutputHash = transitionEventOutputHash(inst)
+		event.LastOutputHash = d.openCodePollSignal(profile, inst, transitionEventOutputHash(inst))
 	}
 	statsParent := statsParentFor(inst)
 	selfConductor := isSelfSuppressedConductor(inst)

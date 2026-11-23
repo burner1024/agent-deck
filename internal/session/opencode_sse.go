@@ -299,6 +299,9 @@ type openCodeEvent struct {
 			ID        string `json:"id"`
 			SessionID string `json:"sessionID"`
 			Role      string `json:"role"`
+			Time      struct {
+				Created int64 `json:"created"`
+			} `json:"time"`
 		} `json:"info"`
 		Status struct {
 			Type string `json:"type"` // "idle" | "busy" | "retry"
@@ -459,10 +462,18 @@ func (w *OpenCodeSSEWatcher) stream(ctx context.Context, instanceID string, src 
 			info := ev.Properties.Info
 			if info.ID != "" && info.SessionID != "" && (info.Role == "user" || info.Role == "assistant") {
 				w.observeOpenCodeTurn(ctx, instanceID, streamID, false, func(obs *openCodeTurnObservation) {
-					if info.Role == "user" && info.ID != obs.TurnID {
+					if info.Role == "user" {
+						// Summary updates repeat the user message after idle.
+						// Compare user identities, not the latest assistant ID.
+						if info.ID == obs.UserID || (obs.UserCreated > 0 && info.Time.Created <= obs.UserCreated) {
+							return
+						}
+						obs.UserID, obs.UserCreated = info.ID, info.Time.Created
 						obs.Running = true
 					}
-					obs.TurnID, obs.Ran = info.ID, true
+					// A real message establishes observation even when the
+					// fresh-start token was spent before the history seed.
+					obs.TurnID, obs.Ran, obs.Ready = info.ID, true, true
 				})
 			}
 			w.touch(ctx, instanceID)

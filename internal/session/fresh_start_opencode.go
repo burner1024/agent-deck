@@ -16,6 +16,10 @@ import (
 
 const openCodeTurnDir = "opencode-turn"
 
+// Allow the TUI server to bind before deciding that no observer is available.
+// This is independent of the longer restart boot timeout.
+const openCodeInitialObservationGrace = 20 * time.Second
+
 type freshStartOpenCodeTurn struct {
 	TurnID string `json:"turn_id"`
 }
@@ -25,6 +29,8 @@ type freshStartOpenCodeTurn struct {
 type openCodeTurnObservation struct {
 	At          time.Time `json:"at"`
 	TurnID      string    `json:"turn_id"`
+	UserID      string    `json:"user_id,omitempty"`
+	UserCreated int64     `json:"user_created,omitempty"`
 	CompletedID string    `json:"completed_id"`
 	Running     bool      `json:"running"`
 	Ran         bool      `json:"ran"`
@@ -186,6 +192,7 @@ func (w *OpenCodeSSEWatcher) seedOpenCodeFreshStart(ctx context.Context, id, str
 			}
 			w.observeOpenCodeTurn(ctx, id, stream, false, func(obs *openCodeTurnObservation) {
 				obs.Ran = true
+				obs.Ready = true
 				if turnID != "" {
 					obs.TurnID = turnID
 					if !obs.Running {

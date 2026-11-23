@@ -52,7 +52,9 @@ type TransitionDaemon struct {
 
 	hookWatcher *StatusFileWatcher
 	// Only Run creates watchers. A diagnostic SyncOnce owns no streams.
-	openCodeWatchers map[string]*OpenCodeSSEWatcher
+	openCodeWatchers  map[string]*OpenCodeSSEWatcher
+	openCodeHolds     map[string]map[string]time.Time
+	openCodePollTurns map[string]map[string]openCodePollTurn
 
 	storages map[string]*Storage
 
@@ -1055,6 +1057,12 @@ func (d *TransitionDaemon) recordTerminalTurns(
 ) {
 	notifyEnabled := GetNotificationsSettings().GetTransitionEventsEnabled()
 	seen := d.turnBaseline(profile)
+	d.observeOpenCodePollTurns(profile, byID, statuses, time.Now())
+	for id := range d.openCodeHolds[profile] {
+		if !isRecordableTurnStatus(statuses[id]) {
+			delete(d.openCodeHolds[profile], id)
+		}
+	}
 
 	for id, to := range statuses {
 		var snap *HookStatus
@@ -1081,7 +1089,7 @@ func (d *TransitionDaemon) recordTerminalTurns(
 			}
 			pi, signal = &v, v.Signal
 		} else {
-			signal = transitionEventOutputHash(inst)
+			signal = d.openCodePollSignal(profile, inst, transitionEventOutputHash(inst))
 		}
 		key := to + "|" + signal
 		previous, known := seen[id]

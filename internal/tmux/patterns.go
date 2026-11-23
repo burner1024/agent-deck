@@ -85,6 +85,9 @@ func DefaultRawPatterns(toolName string) *RawPatterns {
 	case "opencode":
 		return &RawPatterns{
 			BusyPatterns: []string{
+				// The 1.19.5 pulse uses dots and squares. Require the live
+				// interrupt footer so static progress bars remain idle.
+				`re:(?m)^[ \t]*[\x{25a0}\x{2b1d}]{8}[ \t]+esc interrupt(?:[ \t]|$)`,
 				"esc interrupt",
 				"esc to exit",
 				"thinking...",
