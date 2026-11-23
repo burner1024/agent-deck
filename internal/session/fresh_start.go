@@ -258,12 +258,14 @@ func judgeFreshStart(inst *Instance, to string, ts time.Time, substate string) (
 	}
 	expired := time.Since(tok.At) > restartBootTimeout()
 	if tok.OpenCode != nil {
-		if expired {
+		obs := readOpenCodeTurn(inst.ID)
+		// Without an observation of this start, no watcher can prove boot.
+		// Preserve the idle notification rather than wait for token expiry.
+		if expired || obs.ObservedAt.IsZero() || obs.ObservedAt.Before(tok.At) || (!obs.Ready && obs.Stream == "") {
 			spendFreshStartToken(inst.ID, tok)
 			return tok, freshStartNews
 		}
 		if tmux.Substate(substate) == tmux.SubstateIdleAtEmptyPrompt {
-			obs := readOpenCodeTurn(inst.ID)
 			if obs.At.Equal(tok.At) && obs.Ready && time.Since(obs.ObservedAt) < opencodeSSEFreshnessWindow {
 				return tok, freshStartBoot
 			}
