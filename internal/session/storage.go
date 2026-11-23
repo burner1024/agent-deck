@@ -138,6 +138,7 @@ type InstanceData struct {
 	// OpenCode session (persisted for resume after app restart)
 	OpenCodeSessionID  string    `json:"opencode_session_id,omitempty"`
 	OpenCodeDetectedAt time.Time `json:"opencode_detected_at,omitempty"`
+	OpenCodePort       int       `json:"opencode_port,omitempty"`
 
 	// Codex session (persisted for resume after app restart)
 	CodexSessionID  string    `json:"codex_session_id,omitempty"`
@@ -1181,6 +1182,10 @@ func instanceToRow(inst *Instance) (*statedb.InstanceRow, error) {
 		inst.AutoLinkedChannels,        // RFC §4.7 (G4/C2 fix)
 		inst.Color,                     // issue #391
 	)
+	toolData, err := writeOpenCodePortToToolData(toolData, inst.OpenCodePort)
+	if err != nil {
+		return nil, fmt.Errorf("persist OpenCode port for %s: %w", inst.ID, err)
+	}
 	// #1143: idle_timeout_secs lives in the tool_data extras zone — outside
 	// the positional MarshalToolData signature so legacy binaries that don't
 	// know the key preserve it via MergeToolDataExtras.
@@ -1400,6 +1405,7 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			GeminiModel:               geminiModel,
 			OpenCodeSessionID:         opencodeSID,
 			OpenCodeDetectedAt:        opencodeAt,
+			OpenCodePort:              readOpenCodePortFromToolData(r.ToolData),
 			CodexSessionID:            codexSID,
 			CodexDetectedAt:           codexAt,
 			LatestPrompt:              latestPrompt,
@@ -1555,6 +1561,7 @@ func (s *Storage) LoadWithGroupsSnapshot() ([]*Instance, []*GroupData, *statedb.
 			GeminiModel:               geminiModel,
 			OpenCodeSessionID:         opencodeSID,
 			OpenCodeDetectedAt:        opencodeAt,
+			OpenCodePort:              readOpenCodePortFromToolData(r.ToolData),
 			CodexSessionID:            codexSID,
 			CodexDetectedAt:           codexAt,
 			LatestPrompt:              latestPrompt,
@@ -1915,6 +1922,7 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 			GeminiModel:                  instData.GeminiModel,
 			OpenCodeSessionID:            instData.OpenCodeSessionID,
 			OpenCodeDetectedAt:           instData.OpenCodeDetectedAt,
+			OpenCodePort:                 instData.OpenCodePort,
 			CodexSessionID:               instData.CodexSessionID,
 			CodexDetectedAt:              instData.CodexDetectedAt,
 			ToolOptionsJSON:              instData.ToolOptionsJSON,
