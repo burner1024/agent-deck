@@ -6,6 +6,56 @@ import (
 	"time"
 )
 
+func TestFreshStartCodexEmbeddedKickoffToken(t *testing.T) {
+	home := isolatedHomeDir(t)
+	inst := NewInstanceWithTool("fresh-codex", home, "codex")
+	inst.Command = "codex"
+	inst.Wrapper = "{command} --dangerously-bypass-approvals-and-sandbox"
+	command, embedded := inst.buildCodexCommandWithPrompt(inst.Command, "reply pong")
+	if !embedded || !strings.HasSuffix(command, " 'reply pong'") {
+		t.Fatalf("kickoff was not embedded: %q, %v", command, embedded)
+	}
+	noteFreshStart(inst, time.Now())
+	if tok, ok := readFreshStartToken(inst.ID); !ok || tok.Codex == nil {
+		t.Fatalf("embedded kickoff has no Codex token: %+v, %v", tok, ok)
+	}
+}
+
+func TestFreshStartCodexEmbeddedKickoffBoot(t *testing.T) {
+	f := newTurnTestFixture(t)
+	st := stubRestartPIDs(t)
+	st.substate = string(SubstateIdleAtEmptyPrompt)
+	f.child.Tool = "codex"
+	f.child.Command = "codex"
+	f.child.Wrapper = "{command} --dangerously-bypass-approvals-and-sandbox"
+	f.child.ClaudeSessionID = ""
+	_, embedded := f.child.buildCodexCommandWithPrompt(f.child.Command, "reply pong")
+	if !embedded {
+		t.Fatal("kickoff was not embedded")
+	}
+	noteFreshStart(f.child, time.Now())
+	f.observeAllPaths(f.status("waiting"))
+	f.observeAllPaths(f.status("idle"))
+	if got := f.pending(t); strings.Join(got, "\n") != freshStartLine {
+		t.Fatalf("boot records = %q, want %q", got, freshStartLine)
+	}
+	if *f.sends != 0 || InboxHasUrgentPending(f.parent.ID) {
+		t.Fatalf("boot woke parent: sends=%d", *f.sends)
+	}
+	if !f.freshTokenLeft() {
+		t.Fatal("boot spent the kickoff token")
+	}
+	writeHookFileForTest(t, f.child.ID, `{"status":"waiting","event":"agent-turn-complete","codex_completed_sequence":1,"codex_completed_generation":"kickoff"}`)
+	f.observeAllPaths(f.status("running"))
+	f.observeAllPaths(f.status("waiting"))
+	if f.freshTokenLeft() {
+		t.Fatal("kickoff completion did not spend token")
+	}
+	if !InboxHasUrgentPending(f.parent.ID) {
+		t.Fatalf("kickoff completion did not reach parent: %q", f.pending(t))
+	}
+}
+
 func TestFreshStartCodexBoot(t *testing.T) {
 	for _, c := range []struct {
 		name   string
@@ -72,7 +122,7 @@ func TestFreshStartCodexCommandGate(t *testing.T) {
 		{name: "bare", command: "codex", want: true},
 		{name: "custom passthrough", command: "codex --dangerously-bypass-approvals-and-sandbox", want: true},
 		{name: "path", command: "/opt/tools/codex --yolo", want: true},
-		{name: "embedded prompt", command: "codex", prompt: "reply pong"},
+		{name: "embedded prompt", command: "codex", prompt: "reply pong", want: true},
 		{name: "custom positional prompt", command: "codex 'reply pong'"},
 		{name: "custom resume", command: "codex resume --last"},
 		{name: "custom fork", command: "codex fork --last"},
