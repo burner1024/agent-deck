@@ -120,7 +120,12 @@ func TestIssue151OpenCodeBootAndTurn(t *testing.T) {
 			deadline := time.Now().Add(5 * time.Second)
 			var verdict freshStartVerdict
 			for {
-				_, verdict = new(TransitionDaemon).judgeFreshStart("", f.child, "idle", time.Now(), st.substate)
+				// The server accepts the request before the watcher records
+				// its subscription. Judge boot only after that observation.
+				verdict = freshStartNotYet
+				if readOpenCodeTurn(f.child.ID).Stream != "" {
+					_, verdict = new(TransitionDaemon).judgeFreshStart("", f.child, "idle", time.Now(), st.substate)
+				}
 				if verdict != freshStartNotYet || time.Now().After(deadline) {
 					break
 				}
@@ -199,6 +204,43 @@ func TestIssue151OpenCodeBootAndTurn(t *testing.T) {
 			f.d.recordTerminalTurns("default", f.byID, f.idle(), nil)
 			if got := f.pending(t); len(got) != 3 || !strings.HasPrefix(got[2], "urgent:") {
 				t.Fatalf("next turn records = %q", got)
+			}
+		})
+	}
+}
+
+func TestIssue151OpenCodeUnobservedTurn(t *testing.T) {
+	for _, state := range []string{"missing", "zero timestamp", "before token", "no stream"} {
+		t.Run(state, func(t *testing.T) {
+			f := newTurnTestFixture(t)
+			st := stubRestartPIDs(t)
+			st.substate = string(SubstateIdleAtEmptyPrompt)
+			f.child.Tool = "opencode"
+			f.child.ClaudeSessionID = ""
+			at := time.Now().Add(-time.Second)
+			writeTokenFile(freshStartDir, f.child.ID, ".json", freshStartToken{At: at, OpenCode: &freshStartOpenCodeTurn{}})
+			obs := openCodeTurnObservation{At: at}
+			switch state {
+			case "zero timestamp":
+				obs.Ready, obs.Stream = true, "subscription"
+			case "before token":
+				obs.Ready, obs.Stream = true, "subscription"
+				obs.ObservedAt = at.Add(-time.Second)
+			case "no stream":
+				obs.ObservedAt = time.Now()
+			}
+			if state != "missing" {
+				writeTokenFile(openCodeTurnDir, f.child.ID, ".json", obs)
+			}
+			if _, got := new(TransitionDaemon).judgeFreshStart("", f.child, "idle", time.Now(), st.substate); got != freshStartNews {
+				t.Fatalf("unobserved turn verdict = %v, want news immediately", got)
+			}
+			if hasFreshStartToken(f.child.ID) {
+				t.Fatal("unobserved idle retained token")
+			}
+			f.d.recordTerminalTurns("default", f.byID, f.idle(), nil)
+			if got := f.pending(t); len(got) != 1 || !strings.HasPrefix(got[0], "urgent:") {
+				t.Fatalf("completed turn records = %q, want one urgent record", got)
 			}
 		})
 	}
