@@ -11,8 +11,8 @@ import (
 	"github.com/asheshgoplani/agent-deck/internal/tmux"
 )
 
-// A fresh Claude or Codex start (`launch`, `session start`) reaches its empty prompt
-// before its kickoff is typed. With no transcript yet, that edge took
+// A fresh Claude or Codex start (`launch`, `session start`) can reach its empty
+// prompt before its kickoff turn is observed. With no transcript yet, that edge took
 // emitTurn's legacy branch and reached the parent as urgent: its Stop hook
 // blocked on "<child>: idle" and a conductor woke for nothing (#2954). It is
 // the twin of a restart's boot (#2792, restart_resume.go).
@@ -44,7 +44,8 @@ import (
 // Codex records its own start/completion identity instead of turn_seq. It
 // has no boot hook, so only an empty prompt before any observed run since
 // the start, within the boot timeout, can be boot. A changed hook identity
-// or an observed run spends its token even when notify was dropped.
+// or an observed run spends its token even when notify was dropped. An
+// embedded kickoff keeps the token too: its hook evidence can follow the boot.
 
 // freshStartDir holds the tokens under the runtime data dir.
 const freshStartDir = "fresh-start"

@@ -1395,7 +1395,8 @@ func (i *Instance) buildCodexCommandWithPrompt(baseCommand, prompt string) (stri
 	if i.CodexSessionID != "" {
 		return command, false
 	}
-	i.launchesFresh.Store(false) // An embedded kickoff starts a turn immediately.
+	// Keep the fresh-start marker until the kickoff's hook identity changes:
+	// the pane can reach its boot prompt before that turn's hooks arrive.
 	return command + " " + shellescape.Quote(prompt), true
 }
 
