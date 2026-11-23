@@ -588,7 +588,8 @@ func (n *TransitionNotifier) isDuplicate(event TransitionNotificationEvent) bool
 	// Likewise a Codex run signal (issue #2900): the daemon mints one only for
 	// a run it saw start after the child's last decided turn, so a record
 	// without a signal before it is an earlier turn, never this one.
-	if (event.LastOutputHash == "" || record.OutputHash == "") && !(record.OutputHash == "" && (strings.HasPrefix(event.LastOutputHash, "pi-run:") || strings.HasPrefix(event.LastOutputHash, "codex-run:"))) &&
+	// The same proof applies to an observed OpenCode run without SSE.
+	if (event.LastOutputHash == "" || record.OutputHash == "") && !(record.OutputHash == "" && (strings.HasPrefix(event.LastOutputHash, "pi-run:") || strings.HasPrefix(event.LastOutputHash, "codex-run:") || strings.HasPrefix(event.LastOutputHash, "opencode-run:"))) &&
 		record.From == event.FromStatus && record.To == event.ToStatus && elapsed <= shortWindowDedupSeconds {
 		return true
 	}

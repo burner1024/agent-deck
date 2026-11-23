@@ -1,0 +1,17 @@
+{"type":"message.updated","properties":{"sessionID":"ses_turn","info":{"id":"msg_user","sessionID":"ses_turn","role":"user","parentID":null,"time":{"created":1},"finish":null}}}
+{"type":"session.status","properties":{"sessionID":"ses_turn","status":{"type":"busy"}}}
+{"type":"message.updated","properties":{"sessionID":"ses_turn","info":{"id":"msg_tool","sessionID":"ses_turn","role":"assistant","parentID":"msg_user","time":{"created":1},"finish":null}}}
+{"type":"message.updated","properties":{"sessionID":"ses_turn","info":{"id":"msg_user","sessionID":"ses_turn","role":"user","parentID":null,"time":{"created":1},"finish":null}}}
+{"type":"session.status","properties":{"sessionID":"ses_turn","status":{"type":"busy"}}}
+{"type":"message.updated","properties":{"sessionID":"ses_turn","info":{"id":"msg_tool","sessionID":"ses_turn","role":"assistant","parentID":"msg_user","time":{"created":1},"finish":"tool-calls"}}}
+{"type":"message.updated","properties":{"sessionID":"ses_turn","info":{"id":"msg_tool","sessionID":"ses_turn","role":"assistant","parentID":"msg_user","time":{"created":1,"completed":2},"finish":"tool-calls"}}}
+{"type":"session.status","properties":{"sessionID":"ses_turn","status":{"type":"busy"}}}
+{"type":"message.updated","properties":{"sessionID":"ses_turn","info":{"id":"msg_reply","sessionID":"ses_turn","role":"assistant","parentID":"msg_user","time":{"created":1},"finish":null}}}
+{"type":"session.status","properties":{"sessionID":"ses_turn","status":{"type":"busy"}}}
+{"type":"message.updated","properties":{"sessionID":"ses_turn","info":{"id":"msg_user","sessionID":"ses_turn","role":"user","parentID":null,"time":{"created":1},"finish":null}}}
+{"type":"message.updated","properties":{"sessionID":"ses_turn","info":{"id":"msg_reply","sessionID":"ses_turn","role":"assistant","parentID":"msg_user","time":{"created":1},"finish":"stop"}}}
+{"type":"message.updated","properties":{"sessionID":"ses_turn","info":{"id":"msg_reply","sessionID":"ses_turn","role":"assistant","parentID":"msg_user","time":{"created":1,"completed":2},"finish":"stop"}}}
+{"type":"session.status","properties":{"sessionID":"ses_turn","status":{"type":"busy"}}}
+{"type":"session.status","properties":{"sessionID":"ses_turn","status":{"type":"idle"}}}
+{"type":"session.idle","properties":{"sessionID":"ses_turn"}}
+{"type":"message.updated","properties":{"sessionID":"ses_turn","info":{"id":"msg_user","sessionID":"ses_turn","role":"user","parentID":null,"time":{"created":1},"finish":null}}}

@@ -87,7 +87,9 @@ func DefaultRawPatterns(toolName string) *RawPatterns {
 			BusyPatterns: []string{
 				// 1.19 footer: the ■/⬝ pulse, then the hint, on the row it shares with
 				// the key hints and version, which the bare "esc interrupt" check rejects.
-				`re:[■⬝]{3,}\s+esc interrupt`,
+				// Anchored to eight cells at line start so quoted text and static
+				// progress bars stay idle.
+				`re:(?m)^[ \t]*[\x{25a0}\x{2b1d}]{8}[ \t]+esc interrupt(?:[ \t]|$)`,
 				"esc interrupt",
 				"esc to exit",
 				"thinking...",
