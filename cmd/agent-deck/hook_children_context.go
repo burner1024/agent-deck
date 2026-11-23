@@ -64,6 +64,7 @@ func formatChildrenContext(rows []childRow) string {
 	}
 
 	var waiting, done []childRow
+	doneCount := 0
 	running := 0
 	for _, r := range rows {
 		switch {
@@ -71,7 +72,10 @@ func formatChildrenContext(rows []childRow) string {
 		// running; the ledger is last-wins and never deleted, so without
 		// the status check an old completion was re-listed on every prompt.
 		case r.DoneStatus != "" && r.Status != "running":
-			done = append(done, r)
+			doneCount++
+			if !r.doneNotified {
+				done = append(done, r)
+			}
 		case r.Status == "waiting":
 			waiting = append(waiting, r)
 		case r.Status == "running":
@@ -81,10 +85,10 @@ func formatChildrenContext(rows []childRow) string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "[agent-deck fleet] %d children: %d running, %d waiting, %d done",
-		len(rows), running, len(waiting), len(done))
+		len(rows), running, len(waiting), doneCount)
 	// Children in none of the three buckets (stopped, error, idle without a
 	// sentinel) — surfaced so the header math always adds up.
-	if other := len(rows) - running - len(waiting) - len(done); other > 0 {
+	if other := len(rows) - running - len(waiting) - doneCount; other > 0 {
 		fmt.Fprintf(&b, ", %d stopped/other", other)
 	}
 
@@ -129,7 +133,9 @@ func buildChildrenContextSummary(instanceID string, force bool) string {
 	if summary == "" {
 		return ""
 	}
-	if !force && session.FleetBlockUnchanged(instanceID, summary) {
+	unchanged := session.FleetBlockUnchanged(instanceID, summary)
+	// A new completion can have the same visible text as an older one.
+	if !force && unchanged && !strings.Contains(summary, "\n- completed:") {
 		_ = session.BumpInboxStats(instanceID, func(s *session.InboxStats) { s.FleetBlockSkips++ })
 		return ""
 	}
@@ -150,7 +156,7 @@ func renderChildrenContextSummary(instanceID string) string {
 	}
 	defer func() { _ = storage.Close() }()
 
-	kids := childrenOf(instanceID, instances)
+	kids := session.FilterInstancesByArchive(childrenOf(instanceID, instances), false)
 	if len(kids) == 0 {
 		return ""
 	}
@@ -158,7 +164,20 @@ func renderChildrenContextSummary(instanceID string) string {
 	// No pane capture here: this runs inside the parent's hook handler on
 	// every prompt (review round 4 P2). The hook-lag sample is taken by the
 	// polling surfaces (`session children --json` / `--follow`).
-	return withNotifyDaemonNote(formatChildrenContext(buildChildRows(kids, cachedChildStatus)), session.ReadWriterStatus())
+	rows := buildChildRows(kids, cachedChildStatus)
+	shown := 0
+	for i := range rows {
+		r := &rows[i]
+		if r.DoneStatus == "" || r.Status == "running" {
+			continue
+		}
+		r.doneNotified = session.FleetCompletionNotified(instanceID, r.doneEntry)
+		if !r.doneNotified && shown < maxContextBullets {
+			session.NoteFleetCompletion(instanceID, r.doneEntry)
+			shown++
+		}
+	}
+	return withNotifyDaemonNote(formatChildrenContext(rows), session.ReadWriterStatus())
 }
 
 // withNotifyDaemonNote appends the #2834 warning to the fleet header line when
