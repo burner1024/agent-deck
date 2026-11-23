@@ -169,6 +169,9 @@ func (d *TransitionDaemon) emitTurnInner(profile string, inst *Instance, byID ma
 		// Issue #2900: a Codex turn whose hook evidence is stale carries a
 		// signal minted from its observed run, and a late hook completion of
 		// a run already recorded that way is absorbed.
+		if d.codexWaitingForTurnEnd(profile, inst, event) {
+			return event, false
+		}
 		absorb, commitCodex := d.codexTurnGate(profile, inst, &event, time.Now())
 		if absorb {
 			event.DeliveryResult = transitionDeliveryDropped

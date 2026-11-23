@@ -124,6 +124,33 @@ func codexRunSignal(childID string, runStart time.Time) string {
 	return fmt.Sprintf("codex-run:%s:%d", childID, runStart.UnixNano())
 }
 
+// codexWaitingForTurnEnd keeps a pane-only waiting edge pending while work
+// continues. A stale hook cannot prove completion; an idle composer can, so
+// a dropped notify still reaches the run fallback instead of losing the turn.
+func (d *TransitionDaemon) codexWaitingForTurnEnd(profile string, inst *Instance, event TransitionNotificationEvent) bool {
+	if !IsCodexCompatible(inst.Tool) || normalizeStatusString(event.ToStatus) != string(StatusWaiting) ||
+		event.Substate == string(SubstateInteractiveMenu) {
+		return false
+	}
+	hook := strings.TrimSpace(event.LastOutputHash)
+	stale := hook == ""
+	if tr := d.codexTrack(profile, inst.ID, false); tr != nil {
+		stale = stale || hook == tr.decidedHook || hook == tr.absorbedHook
+	}
+	if d.notifier != nil {
+		_, last, ok := d.notifier.lastNotifiedTurn(inst.ID)
+		stale = stale || (ok && last == hook) || d.codexRunRecordCovers(inst, event.ToStatus)
+	}
+	if !stale {
+		return false
+	}
+	probe := d.codexComposerIdle
+	if probe == nil {
+		probe = codexPaneAtComposer
+	}
+	return !probe(inst)
+}
+
 // codexTurnGate applies the run rules above to a Codex record about to go to
 // the notifier. absorb reports a late hook completion of a run already
 // decided under a run signal; the caller drops it. Otherwise event's signal
