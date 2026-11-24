@@ -83,13 +83,21 @@ func readFreshStartCodexTurn(id string) freshStartCodexTurn {
 	return freshStartCodexTurn{}
 }
 
-// codexFreshStartObservable accepts only a direct binary and known switches
+// codexFreshStartObservable accepts the binary or its configured executable and known switches
 // that cannot supply a prompt or resume a conversation. Uncertain arguments
 // stay on the news path rather than risk hiding a completed turn.
 func codexFreshStartObservable(command string) bool {
 	words, ok := shellwords.Split(command)
-	if !ok || len(words) == 0 || filepath.Base(words[0]) != "codex" {
+	if !ok || len(words) == 0 {
 		return false
+	}
+	if filepath.Base(words[0]) != "codex" {
+		configured := GetCodexCommand()
+		launcher, valid := shellwords.Split(configured)
+		if !valid || len(launcher) != 1 || launcher[0] != words[0] ||
+			isShellEnvAssignment(launcher[0]) || strings.ContainsAny(configured, ";&|<>$`()\n\r") {
+			return false
+		}
 	}
 	for _, word := range words[1:] {
 		switch word {
