@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/shellwords"
@@ -76,7 +77,13 @@ func openCodeFreshStartObservable(i *Instance, command string) bool {
 		return false
 	}
 	base := filepath.Base(words[0])
-	return base == "opencode" || base == "opencode2"
+	if base == "opencode" || base == "opencode2" {
+		return true
+	}
+	// A configured executable uses the same bounded observation proof as
+	// the plain binary. A different command or shell expression has no token.
+	return strings.TrimSpace(command) == strings.TrimSpace(GetToolCommand("opencode")) &&
+		!isShellEnvAssignment(words[0]) && !strings.ContainsAny(command, ";&|<>$`()\n\r")
 }
 
 // Only the current, uncancelled subscription can record observations. A late
