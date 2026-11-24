@@ -447,6 +447,9 @@ func sendWithRetryTarget(target sendRetryTarget, message string, skipVerify bool
 	// evidence, never its absence (issue #1793): one last fresh frame goes to
 	// the observer, then it classifies.
 	if opts.verifyDelivery {
+		if opts.turnAdvanced != nil && opts.turnAdvanced() {
+			return deliverySubmitted, nil
+		}
 		if sawActiveAfterSend {
 			// The agent went active after the send: it took the message up.
 			obs.NoteTurnStarted()
@@ -701,6 +704,12 @@ func verifyContentArrival(target sendRetryTarget, message string, opts sendRetry
 			if obs.TurnStarted() {
 				return deliverySubmitted, nil
 			}
+			// Codex accepts Enter during startup but holds the body until
+			// initialization ends. Use the remaining configured budget rather
+			// than declaring that acknowledged wait a swallowed submission.
+			if obs.StartupPending() && checks < opts.maxRetries {
+				checks = opts.maxRetries
+			}
 			// Retry only a submit that was really swallowed. The first capture
 			// comes right after the paste and its Enter, when Codex often still
 			// shows the text because it has not processed that Enter yet, so
@@ -765,6 +774,17 @@ func verifyContentArrival(target sendRetryTarget, message string, opts sendRetry
 		}
 	}
 
+	// Reconcile once more at the boundary: startup can finish between the
+	// last poll and the verdict, and a durable turn outranks an older pane.
+	if baseline.paneOK {
+		raw, captureErr := target.CapturePaneFresh()
+		obs.Observe(send.CaptureOutcome(raw, captureErr))
+		opts.forgetOwnedChipIfEmptied(raw, captureErr, message)
+		sawBody = sawBody || obs.BodyArrived()
+	}
+	if (opts.turnAdvanced != nil && opts.turnAdvanced()) || obs.TurnStarted() {
+		return deliverySubmitted, nil
+	}
 	if sawBody {
 		obs.NoteBodyArrived()
 		// The bytes demonstrably reached the pane. What that means is the

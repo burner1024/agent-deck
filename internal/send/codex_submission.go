@@ -24,6 +24,18 @@ import (
 
 const codexPromptGlyph = "›"
 
+// codexStartupPending recognizes the footer Codex draws after accepting Enter
+// during startup. The message waits in the composer until initialization ends.
+// Only the final nonblank row counts; transcript text cannot acknowledge it.
+func codexStartupPending(content string) bool {
+	rows := strings.Split(strings.TrimSpace(content), "\n")
+	if strings.Join(strings.Fields(rows[len(rows)-1]), " ") != "Waiting for startup \u00b7 esc cancel" {
+		return false
+	}
+	cells := codexCells(content)
+	return len(cells) > 0 && !cells[len(cells)-1].followedByTranscript
+}
+
 // codexCell is one column-0 "›" cell of a Codex frame.
 type codexCell struct {
 	// text is the cell's body, glyph removed and whitespace-collapsed.
