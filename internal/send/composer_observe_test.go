@@ -85,8 +85,8 @@ func TestObserveComposer_NilReaderIsUnreadableWithoutCapture(t *testing.T) {
 	}
 }
 
-// Every state but empty carries the plain still-typed notice; unverified
-// adds "it may be mixed with other text".
+// A visible leftover carries the still-typed notice. An unreadable composer
+// leaves submission unknown.
 func TestComposerObservation_Describe(t *testing.T) {
 	if d := (ComposerObservation{State: ComposerLeft, Verified: true}).Describe(); d != StillTypedNotice {
 		t.Fatalf("verified: %q", d)
@@ -95,7 +95,7 @@ func TestComposerObservation_Describe(t *testing.T) {
 	if !strings.Contains(d, StillTypedNotice+MixedNotice) || !strings.HasPrefix(d, ObserveReasonForeign) {
 		t.Fatalf("unverified: %q", d)
 	}
-	if d := (ComposerObservation{State: ComposerUnreadable, Reason: ObserveReasonUnreadable}).Describe(); !strings.Contains(d, StillTypedNotice) {
+	if d := (ComposerObservation{State: ComposerUnreadable, Reason: ObserveReasonUnreadable}).Describe(); strings.Contains(d, StillTypedNotice) || !strings.Contains(d, "unknown") {
 		t.Fatalf("unreadable: %q", d)
 	}
 	if d := (ComposerObservation{State: ComposerEmpty}).Describe(); strings.Contains(d, "still typed") || !strings.Contains(d, "may have been submitted") {

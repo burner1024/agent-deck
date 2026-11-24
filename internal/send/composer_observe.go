@@ -115,13 +115,13 @@ func ObserveComposer(t ComposerGuardTarget, message, ownedChip string, read Comp
 }
 
 // Describe says, for an error or warning line, what the input box holds.
-// Every state but ComposerEmpty carries StillTypedNotice.
+// Only a visible leftover carries StillTypedNotice.
 func (o ComposerObservation) Describe() string {
 	switch o.State {
 	case ComposerEmpty:
 		return "the input box now reads empty: something other than this send emptied it and the message may have been submitted; do not blindly resend"
 	case ComposerUnreadable:
-		return "the input box could not be read (" + o.Reason + "); assume " + StillTypedNotice + MixedNotice
+		return "the input box could not be read (" + o.Reason + "); submission is unknown; do not blindly resend"
 	}
 	if o.Verified {
 		return StillTypedNotice

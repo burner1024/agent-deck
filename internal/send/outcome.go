@@ -433,6 +433,12 @@ func (o *Observer) BodyArrived() bool { return o.ev.BodyArrived }
 // TurnStarted reports whether any positive submission signal was recorded.
 func (o *Observer) TurnStarted() bool { return o.ev.TurnStarted }
 
+// StartupPending reports Codex's explicit acknowledgement that input is
+// waiting for initialization. It is neither a started turn nor a rejected Enter.
+func (o *Observer) StartupPending() bool {
+	return o.CodexLike && o.hasLast && codexStartupPending(tmux.StripANSI(o.last))
+}
+
 // Verdict classifies what was observed. The final-frame failure checks
 // (composer still holding the body, an open interactive menu) only apply to
 // panes with a composer (hasComposer).
@@ -440,13 +446,14 @@ func (o *Observer) Verdict(checks int, window string) Verdict {
 	ev := o.ev
 	ev.Tool, ev.Checks, ev.Window = o.Tool, checks, window
 	if o.hasLast && !ev.TurnStarted && o.hasComposer() {
-		ev.ComposerHoldsBody = o.composerHolds(o.last)
+		pending := o.StartupPending()
+		ev.ComposerHoldsBody = !pending && o.composerHolds(o.last)
 		if o.ClaudeLike {
 			ev.MenuOpen = MenuSwallowedMessage(tmux.StripANSI(o.last))
 		}
 		// Held-then-cleared: the harness took the body out of its composer.
 		// Only on a target that was not already mid-turn (see BusyBeforeSend).
-		if o.held && !ev.ComposerHoldsBody && !ev.MenuOpen && !o.BusyBeforeSend {
+		if o.held && !pending && !ev.ComposerHoldsBody && !ev.MenuOpen && !o.BusyBeforeSend {
 			ev.TurnStarted = true
 		}
 	}
