@@ -451,11 +451,12 @@ func TestIssue2954_FreshCommandsLeaveAToken(t *testing.T) {
 			writeConfigTOML(t, home, "[claude]\ncommand = \"/opt/tools/bin/claude\"\nconfig_dir = \""+filepath.Join(home, "other-claude")+"\"\n")
 			return inst.buildClaudeCommand("claude")
 		}, true, true},
-		// Fresh, but its turns may not show on this host: no token.
+		// A configured executable gets a provisional token. If its hooks
+		// report elsewhere, the judge releases news at the boot timeout.
 		{"configured alias that picks its own config dir", func(t *testing.T, home string, inst *Instance) string {
 			writeConfigTOML(t, home, "[claude]\ncommand = \"cdw\"\n")
 			return inst.buildClaudeCommand("claude")
-		}, true, false},
+		}, true, true},
 		{"inline env before the binary", func(t *testing.T, home string, inst *Instance) string {
 			writeConfigTOML(t, home, "[claude]\ncommand = \"CLAUDE_CONFIG_DIR=/elsewhere claude\"\n")
 			return inst.buildClaudeCommand("claude")

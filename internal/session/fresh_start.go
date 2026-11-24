@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/asheshgoplani/agent-deck/internal/shellwords"
 	"github.com/asheshgoplani/agent-deck/internal/tmux"
 )
 
@@ -18,8 +19,8 @@ import (
 //
 // The start leaves a token in runtime/fresh-start/<id>.json, written just
 // before the spawn and removed if the spawn fails, for a command that starts
-// a new conversation in the claude binary itself, whose turns this host can
-// see: local, unwrapped, hooks on. Any other start removes a stale one. A
+// a new conversation through a local configured executable, with hooks
+// installed and no command template wrapper. Any other start removes a stale one. A
 // resuming restart leaves none (its boot is the restart token's); RestartFresh
 // starts a new conversation through Start and gets one. The daemon then
 // turns the child's arrival at its empty prompt with no turn since the start
@@ -63,9 +64,25 @@ func freshStartObservable(claudeCmd string) bool {
 	return len(fields) > 0 && !isShellEnvAssignment(fields[0]) && isClaudeCommand(claudeCmd)
 }
 
+// freshStartExecutable accepts a configured executable without arguments or
+// shell expressions. Its name cannot prove that hooks fire: the fresh-start
+// judge waits for that process's hook evidence and releases news at the bound.
+func freshStartExecutable(command string) bool {
+	if strings.ContainsAny(command, ";&|<>$`()\n\r") {
+		return false
+	}
+	words, ok := shellwords.Split(command)
+	return ok && len(words) == 1 && words[0] != "" && !strings.HasPrefix(words[0], "-") && !isShellEnvAssignment(words[0])
+}
+
+func freshStartCommandObservable(command string) bool {
+	return freshStartObservable(command) || freshStartExecutable(command)
+}
+
 // noteFreshStart writes i's token before the spawn when the command just built
-// starts a new conversation (launchesFresh, consumed here) whose turns this
-// host sees (claudeTurnSeqObservable). Otherwise it removes a stale one.
+// starts a new conversation (launchesFresh, consumed here) with hooks
+// installed locally (claudeTurnSeqObservable). The judge requires runtime
+// hook proof before suppressing boot. Otherwise it removes a stale one.
 func noteFreshStart(i *Instance, now time.Time) {
 	fresh := i.launchesFresh.Swap(false)
 	clearFreshStartToken(i.ID)

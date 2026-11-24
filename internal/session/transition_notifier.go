@@ -588,7 +588,11 @@ func (n *TransitionNotifier) isDuplicate(event TransitionNotificationEvent) bool
 	// Likewise a Codex run signal (issue #2900): the daemon mints one only for
 	// a run it saw start after the child's last decided turn, so a record
 	// without a signal before it is an earlier turn, never this one.
-	if (event.LastOutputHash == "" || record.OutputHash == "") && !(record.OutputHash == "" && (strings.HasPrefix(event.LastOutputHash, "pi-run:") || strings.HasPrefix(event.LastOutputHash, "codex-run:"))) &&
+	// A classified reply UUID also identifies a completed turn. An earlier
+	// boot with no transcript has no signal to compare against it; the legacy
+	// window must not discard the first reply and then journal it as delivered.
+	identifiedReply := event.TurnUUID != "" && event.LastOutputHash == "turn:"+event.TurnUUID
+	if (event.LastOutputHash == "" || record.OutputHash == "") && !(record.OutputHash == "" && (identifiedReply || strings.HasPrefix(event.LastOutputHash, "pi-run:") || strings.HasPrefix(event.LastOutputHash, "codex-run:"))) &&
 		record.From == event.FromStatus && record.To == event.ToStatus && elapsed <= shortWindowDedupSeconds {
 		return true
 	}
