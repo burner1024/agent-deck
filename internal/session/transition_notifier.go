@@ -589,7 +589,11 @@ func (n *TransitionNotifier) isDuplicate(event TransitionNotificationEvent) bool
 	// a run it saw start after the child's last decided turn, so a record
 	// without a signal before it is an earlier turn, never this one.
 	// The same proof applies to an observed OpenCode run without SSE.
-	if (event.LastOutputHash == "" || record.OutputHash == "") && !(record.OutputHash == "" && (strings.HasPrefix(event.LastOutputHash, "pi-run:") || strings.HasPrefix(event.LastOutputHash, "codex-run:") || strings.HasPrefix(event.LastOutputHash, "opencode-run:"))) &&
+	// A classified reply UUID also identifies a completed turn. An earlier
+	// boot with no transcript has no signal to compare against it; the legacy
+	// window must not discard the first reply and then journal it as delivered.
+	identifiedReply := event.TurnUUID != "" && event.LastOutputHash == "turn:"+event.TurnUUID
+	if (event.LastOutputHash == "" || record.OutputHash == "") && !(record.OutputHash == "" && (identifiedReply || strings.HasPrefix(event.LastOutputHash, "pi-run:") || strings.HasPrefix(event.LastOutputHash, "codex-run:") || strings.HasPrefix(event.LastOutputHash, "opencode-run:"))) &&
 		record.From == event.FromStatus && record.To == event.ToStatus && elapsed <= shortWindowDedupSeconds {
 		return true
 	}

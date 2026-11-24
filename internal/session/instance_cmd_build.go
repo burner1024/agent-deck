@@ -157,7 +157,7 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 					freshID := generateUUID()
 					i.ClaudeSessionID = freshID
 					i.markClaudeSessionIDVerified()
-					i.launchesFresh.Store(freshStartObservable(claudeCmd))
+					i.launchesFresh.Store(freshStartCommandObservable(claudeCmd))
 					return fmt.Sprintf(`%sexec %s%s --session-id "%s"%s`,
 						bashExportPrefix, execEnvPrefix, claudeCmd, freshID, extraFlags)
 				}
@@ -197,7 +197,7 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 				if q := shellescape.Quote(freshID); q != freshID {
 					sessionIDArg = q
 				}
-				i.launchesFresh.Store(freshStartObservable(claudeCmd))
+				i.launchesFresh.Store(freshStartCommandObservable(claudeCmd))
 				return fmt.Sprintf(
 					`%sexec %s%s --session-id %s%s`,
 					bashExportPrefix, execEnvPrefix, claudeCmd, sessionIDArg, extraFlags)
@@ -227,7 +227,7 @@ func (i *Instance) buildClaudeCommandWithMessage(baseCommand, message string) st
 		// #1815: minted here for this session — vouched ownership.
 		i.markClaudeSessionIDVerified()
 		// A startup query (#725) starts a turn at once: no boot at an empty prompt.
-		i.launchesFresh.Store(freshStartObservable(claudeCmd) && i.StartupQuery == "")
+		i.launchesFresh.Store(freshStartCommandObservable(claudeCmd) && i.StartupQuery == "")
 
 		// Startup query (#725, v1.7.67): appended as one shell-quoted
 		// positional arg so multi-word queries survive bash -c. Empty
@@ -1645,7 +1645,7 @@ func (i *Instance) buildClaudeResumeCommand() string {
 			slog.String("refused_session_id", logging.SanitizeValue(refused)),
 			slog.String("path", logging.SanitizeValue(i.ProjectPath)),
 			slog.String("reason", "identity_guard_fresh_session"))
-		i.launchesFresh.Store(freshStartObservable(claudeCmd))
+		i.launchesFresh.Store(freshStartCommandObservable(claudeCmd))
 		return fmt.Sprintf("%s%s%s --session-id %s%s",
 			envPrefix, bashExportPrefix, claudeCmd, fresh, extraFlags)
 	}
@@ -1710,7 +1710,7 @@ func (i *Instance) buildClaudeResumeCommand() string {
 			envPrefix, bashExportPrefix, claudeCmd, shellescape.Quote(i.ClaudeSessionID), extraFlags)
 	}
 	// Session was never interacted with - use --session-id to create fresh session.
-	i.launchesFresh.Store(freshStartObservable(claudeCmd))
+	i.launchesFresh.Store(freshStartCommandObservable(claudeCmd))
 	return fmt.Sprintf("%s%sexec %s --session-id %s%s",
 		envPrefix, bashExportPrefix, claudeCmd, shellescape.Quote(i.ClaudeSessionID), extraFlags)
 }
