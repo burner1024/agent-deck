@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,13 +29,8 @@ var (
 	uuidPatternRE               = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 	geminiPromptRE              = regexp.MustCompile(`^(>|>>>|\$|❯|➜|gemini>|✦)\s*$`)
 	shellPromptRE               = regexp.MustCompile(`^[\s]*(>|>>>|\$|❯|➜|#|%)\s*$`)
-	openCodeSessionHTTPClient   = &http.Client{
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	openCodeCLIQueryGroup singleflight.Group
-	openCodeCLIQueryCache = struct {
+	openCodeCLIQueryGroup       singleflight.Group
+	openCodeCLIQueryCache       = struct {
 		sync.Mutex
 		entries map[string]openCodeCLIQueryCacheEntry
 	}{entries: make(map[string]openCodeCLIQueryCacheEntry)}
@@ -104,9 +98,6 @@ const (
 	opencodeRotationScanInterval   = 15 * time.Second
 	opencodeRotationActivityWindow = 30 * time.Second
 	opencodeStartupTimeSkew        = 5 * time.Second
-	// openCodeSessionResponseLimit bounds allocation if a persisted OpenCode
-	// port is later occupied by an unrelated loopback listener.
-	openCodeSessionResponseLimit = 8 << 20
 	// opencodeSSEFreshnessWindow bounds how long an SSE-derived status stays
 	// authoritative without stream traffic (issue #1614). OpenCode heartbeats
 	// its /event stream roughly every 10s, and the watcher refreshes the

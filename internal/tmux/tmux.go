@@ -2397,6 +2397,17 @@ func (s *Session) GetWorkDir() string {
 	return strings.TrimSpace(string(output))
 }
 
+// PaneStartCommand returns the command the session's pane was started with. It
+// is what a session's tool was launched as, flags included.
+func (s *Session) PaneStartCommand() (string, error) {
+	// Bounded like GetWorkDir: a wedged server must not hang the caller.
+	output, err := s.runBoundedOutput("display-message", "-t", exactSessionTarget(s.TmuxName()), "-p", "#{pane_start_command}")
+	if err != nil {
+		return "", fmt.Errorf("reading the pane start command of %q: %w", s.TmuxName(), err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 // IsAltScreen reports whether the pane is currently showing the alternate
 // screen — i.e. a full-screen TUI such as Claude in fullscreen mode. Such panes
 // keep NO tmux scrollback (history_size stays 0 regardless of history-limit), so

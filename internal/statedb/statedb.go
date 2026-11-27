@@ -1689,6 +1689,12 @@ func (s *StateDB) WriteCodexSessionBinding(id, sessionID string, detectedAt time
 	return s.writeHarnessSessionBinding(id, sessionID, "codex", detectedAt)
 }
 
+// WriteOpenCodeSessionBinding records the session an OpenCode child's own event stream named, so the
+// binding outlives the process that read the stream.
+func (s *StateDB) WriteOpenCodeSessionBinding(id, sessionID string, detectedAt time.Time) error {
+	return s.writeHarnessSessionBinding(id, sessionID, "opencode", detectedAt)
+}
+
 // WriteGeminiSessionBinding is the Gemini counterpart of
 // WriteClaudeSessionBinding. See that function's doc comment for the
 // PERSIST-12 / json_set / withBusyRetry rationale; the Gemini rebind

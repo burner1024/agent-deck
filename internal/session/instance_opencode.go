@@ -5,11 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,19 +49,37 @@ func (i *Instance) UpdateOpenCodeSSEStatus(status string, updatedAt time.Time) {
 	i.sseLastUpdate = updatedAt
 }
 
-// DetectOpenCodeSession is the public wrapper for async OpenCode session detection
-// Call this for restored sessions that don't have a session ID yet
+// DetectOpenCodeSession finds the session of a restored child that has no session ID yet.
+// Call it in a goroutine: it waits for the child's session.
 func (i *Instance) DetectOpenCodeSession() {
-	i.detectOpenCodeSessionAsync()
+	i.detectOpenCodeSessionWithin(openCodeStreamRestoredWindow)
 }
 
-// detectOpenCodeSessionAsync detects the OpenCode session ID after startup
-// OpenCode generates session IDs internally (format: ses_XXXXX)
-// We query the managed OpenCode HTTP server (or the bounded compatibility CLI
-// fallback) and match by project directory, picking the most recently updated
-// session since OpenCode auto-resumes the last session.
+// detectOpenCodeSessionAsync finds the session of a child after its launch or restart.
+// Call it in a goroutine: it waits for the child's session.
 func (i *Instance) detectOpenCodeSessionAsync() {
+	i.detectOpenCodeSessionWithin(openCodeStreamBindDeadline)
+}
+
+// detectOpenCodeSessionWithin finds the session the child is in. OpenCode generates
+// session IDs internally (format: ses_XXXXX).
+//
+// A child with an event server of its own is bound by that server's stream, which
+// names only its own sessions: a directory listing also holds the session of every
+// sibling launched into the directory, and the most recently updated one is usually
+// a sibling's (see openCodeStreamRoot).
+//
+// Any other child is matched against the sessions OpenCode stores for the project
+// directory: the 2.x shared service, where the launch command records the created
+// ID, or the bounded compatibility CLI fallback, which takes the most recently
+// updated session since OpenCode auto-resumes the last session.
+func (i *Instance) detectOpenCodeSessionWithin(streamWait time.Duration) {
 	time.Sleep(1 * time.Second)
+
+	if port := i.openCodeOwnServerPort(); port > 0 {
+		i.bindOpenCodeSessionFromStream(port, streamWait)
+		return
+	}
 
 	// Phase 1: Quick detection for existing sessions (5 attempts over ~15s)
 	quickDelays := []time.Duration{0, 2 * time.Second, 3 * time.Second, 4 * time.Second, 5 * time.Second}
@@ -313,11 +327,17 @@ func findBestOpenCodeSession(sessions []openCodeSessionMetadata, projectPath, cu
 	return bestMatch
 }
 
-// queryOpenCodeSession queries the managed OpenCode HTTP server for sessions
-// matching our project directory. Unbound instances adopt the most recently
-// updated session, while already-bound instances keep their current ID as long
-// as it still exists. Instances without a managed port retain a coalesced,
-// rate-limited CLI compatibility path.
+// queryOpenCodeSession returns the session the child is in.
+//
+// A child with an event server of its own is bound by that server's stream alone:
+// the root session it named last, else the current binding. The directory listing
+// is not read for it, as it also holds the session of every sibling launched into
+// the directory.
+//
+// Any other child keeps a binding that is still in the listing, while an unbound
+// one takes the most recently updated session of its directory (on 2.x: one
+// created after its own spawn, or the ID the launch recorded). Instances without
+// a managed port retain a coalesced, rate-limited CLI compatibility path.
 //
 // CLI fallback wall-clock bounds:
 //   - 5s context deadline for the subprocess itself.
@@ -338,6 +358,19 @@ func (i *Instance) queryOpenCodeSession() string {
 	i.mu.RUnlock()
 
 	sharedService := port == 0 && i.openCodeRejectsV1LaunchFlags()
+	if !sharedService {
+		if own := i.openCodeOwnServerPort(); own > 0 {
+			if root, ok := latestOpenCodeStreamRoot(i.ID, own); ok {
+				return root
+			}
+			// The process that read the stream at launch may have exited; it
+			// recorded the binding in the child's own pane.
+			if currentID == "" {
+				return i.openCodeLaunchID(tmuxSession)
+			}
+			return currentID
+		}
+	}
 	var minCreated int64
 	if sharedService && currentID == "" {
 		// The V2 launch command records the ID returned by session.create
@@ -355,21 +388,7 @@ func (i *Instance) queryOpenCodeSession() string {
 		}
 	}
 
-	var sessions []openCodeSessionMetadata
-	if port > 0 {
-		var err error
-		sessions, err = i.queryOpenCodeSessionsHTTP(port, projectPath)
-		if err != nil {
-			sessionLog.Debug("opencode_http_query_failed",
-				slog.String("dir", logging.SanitizeValue(projectPath)),
-				slog.Int("port", port),
-				slog.String("error", err.Error()),
-			)
-			return ""
-		}
-	} else {
-		sessions = i.queryOpenCodeSessionsCLI(projectPath, currentID, minCreated)
-	}
+	sessions := i.queryOpenCodeSessionsCLI(projectPath, currentID, minCreated)
 
 	sessionLog.Debug("opencode_parsed_sessions", slog.Int("count", len(sessions)))
 
@@ -428,44 +447,6 @@ func (i *Instance) SyncOpenCodeLaunchID() {
 			i.setOpenCodeSessionLocked(id)
 		}
 	}
-}
-
-func (i *Instance) queryOpenCodeSessionsHTTP(port int, projectPath string) ([]openCodeSessionMetadata, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	endpoint := url.URL{
-		Scheme: "http",
-		Host:   net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
-		Path:   "/session",
-	}
-	query := endpoint.Query()
-	query.Set("directory", projectPath)
-	endpoint.RawQuery = query.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := openCodeSessionHTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("opencode session endpoint returned %s", resp.Status)
-	}
-
-	var payload []openCodeHTTPSessionMetadata
-	if err := json.NewDecoder(io.LimitReader(resp.Body, openCodeSessionResponseLimit)).Decode(&payload); err != nil {
-		return nil, err
-	}
-
-	sessions := make([]openCodeSessionMetadata, 0, len(payload))
-	for _, session := range payload {
-		sessions = append(sessions, session.flatten())
-	}
-	return sessions, nil
 }
 
 // minCreated is the earliest creation time an unbound 2.x instance may adopt; 0 means any.
