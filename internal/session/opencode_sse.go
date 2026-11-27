@@ -183,6 +183,7 @@ func (w *OpenCodeSSEWatcher) Sync(targets []SSETarget) {
 			removed = append(removed, conn)
 			delete(w.conns, id)
 			delete(w.statuses, id)
+			forgetOpenCodeStreamRoots(id)
 		}
 	}
 	w.mu.Unlock()
@@ -249,6 +250,7 @@ func (w *OpenCodeSSEWatcher) Stop() {
 		removed = append(removed, conn)
 		delete(w.conns, id)
 		delete(w.statuses, id)
+		forgetOpenCodeStreamRoots(id)
 	}
 	w.mu.Unlock()
 	for _, conn := range removed {
@@ -295,9 +297,13 @@ type openCodeEvent struct {
 	Type       string `json:"type"`
 	Properties struct {
 		SessionID string `json:"sessionID"`
-		Info      struct {
+		// Info is the message on message.updated, and the session on
+		// session.created and session.updated, where a sub-agent session has a
+		// parentID.
+		Info struct {
 			ID        string `json:"id"`
 			SessionID string `json:"sessionID"`
+			ParentID  string `json:"parentID"`
 			Role      string `json:"role"`
 			Time      struct {
 				Created int64 `json:"created"`
@@ -456,6 +462,11 @@ func (w *OpenCodeSSEWatcher) stream(ctx context.Context, instanceID string, src 
 				lastReconcile = time.Now()
 			}
 			continue
+		}
+		// The 1.x stream is the child's own: the root sessions it names are the
+		// ones the child may be bound to (see opencode_stream.go).
+		if root, ok := openCodeStreamRoot(ev); ok {
+			noteOpenCodeStreamRoot(instanceID, src.port, root, time.Now())
 		}
 		switch ev.Type {
 		case "message.updated":

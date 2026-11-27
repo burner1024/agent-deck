@@ -1024,6 +1024,10 @@ func handleLaunchCommand(profile string, args []string, inspectFlags func(*flag.
 	// so without this the row stays unbound until a follow-up send (#2396,
 	// #2400).
 	persistLiveCodexIdentity(storage, newInstance, codexLaunchIdentityWait)
+	// OpenCode: the same gap, for the session its own event stream names.
+	if initialMessage != "" {
+		persistLiveOpenCodeIdentity(storage, newInstance, openCodeLaunchIdentityWait)
+	}
 
 	// Build output. v1.9.x issue #1031: surface the new session ID
 	// under an explicit `session_id` key so callers (conductor fleet

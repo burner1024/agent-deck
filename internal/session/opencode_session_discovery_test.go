@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,138 +45,63 @@ func configureFakeOpenCode(t *testing.T) {
 	isolateOpenCodeConfig(t, stub)
 }
 
-func TestUpdateOpenCodeSession_ManagedPortUsesHTTPNestedTimes(t *testing.T) {
+// TestUpdateOpenCodeSession_ManagedPortBindsRootNamedOnOwnStream: a child with an event server
+// of its own is bound by that server's stream. The directory listing, which holds a sibling
+// updated last, is not read for it, and a later root session on the stream (a /new in the pane)
+// moves the binding.
+func TestUpdateOpenCodeSession_ManagedPortBindsRootNamedOnOwnStream(t *testing.T) {
 	projectPath := t.TempDir()
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/session", func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("directory"); got != projectPath {
-			t.Errorf("directory query = %q, want %q", got, projectPath)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `[
-			{"id":"ses_OLD","directory":%q,"time":{"created":1000,"updated":2000}},
-			{"id":"ses_NEW","location":{"directory":%q},"time":{"created":3000,"updated":4000}},
-			{"id":"ses_OTHER","directory":"/another/project","time":{"created":5000,"updated":6000}}
-		]`, projectPath, projectPath)
-	})
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-
-	setFakeOpenCodePath(t, "#!/bin/sh\nprintf '[]'\n", false)
-
+	events := make(chan string)
+	stub := newOwnServerStub(t, listingWithSibling(projectPath), events)
 	inst := &Instance{
+		ID:           "inst-own",
 		Tool:         "opencode",
 		ProjectPath:  projectPath,
-		OpenCodePort: server.Listener.Addr().(*net.TCPAddr).Port,
+		OpenCodePort: stub.port(),
 	}
+	watcher := NewOpenCodeSSEWatcher(nil)
+	defer watcher.Stop()
+	watcher.Sync([]SSETarget{{InstanceID: inst.ID, Port: stub.port()}})
+	awaitRoot := func(want string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if root, ok := latestOpenCodeStreamRoot(inst.ID, stub.port()); ok && root == want {
+				return
+			}
+			if time.Now().After(deadline) {
+				root, _ := latestOpenCodeStreamRoot(inst.ID, stub.port())
+				t.Fatalf("stream root = %q, want %q", root, want)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	// The watcher keeps reading, so the whole captured turn goes through the stream.
+	for _, ev := range ownStreamFirstTurn {
+		events <- ev
+	}
+	awaitRoot("ses_OWN")
 	inst.UpdateOpenCodeSession()
 
-	if got := inst.OpenCodeSessionID; got != "ses_NEW" {
-		t.Fatalf("OpenCodeSessionID = %q, want %q", got, "ses_NEW")
+	if got := boundOpenCodeSession(inst); got != "ses_OWN" {
+		t.Fatalf("OpenCodeSessionID = %q after a status pass, want ses_OWN from the child's own stream", got)
 	}
-}
-
-func TestQueryOpenCodeSession_ManagedPortRetriesHTTPAfterFailure(t *testing.T) {
-	projectPath := t.TempDir()
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if requests.Add(1) == 1 {
-			http.Error(w, "warming up", http.StatusServiceUnavailable)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `[{"id":"ses_READY","directory":%q,"time":{"created":1000,"updated":2000}}]`, projectPath)
-	}))
-	t.Cleanup(server.Close)
-
-	marker := filepath.Join(t.TempDir(), "cli-invoked")
-	script := fmt.Sprintf("#!/bin/sh\nprintf x > %q\nprintf '[]'\n", marker)
-	setFakeOpenCodePath(t, script, false)
-
-	inst := &Instance{
-		Tool:         "opencode",
-		ProjectPath:  projectPath,
-		OpenCodePort: server.Listener.Addr().(*net.TCPAddr).Port,
-	}
-	if got := inst.queryOpenCodeSession(); got != "" {
-		t.Fatalf("first query session ID = %q after HTTP failure, want empty", got)
-	}
-	if got := inst.queryOpenCodeSession(); got != "ses_READY" {
-		t.Fatalf("retry session ID = %q, want ses_READY", got)
-	}
-	if got := requests.Load(); got != 2 {
-		t.Fatalf("HTTP request count = %d, want 2", got)
-	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("managed-port retry invoked CLI; marker stat error = %v", err)
-	}
-}
-
-func TestQueryOpenCodeSession_ManagedPortRefusesRedirect(t *testing.T) {
-	projectPath := t.TempDir()
-	var redirectedRequests atomic.Int32
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		redirectedRequests.Add(1)
-		fmt.Fprintf(w, `[{"id":"ses_REDIRECTED","directory":%q,"time":{"created":1000,"updated":2000}}]`, projectPath)
-	}))
-	t.Cleanup(target.Close)
-
-	redirect := httptest.NewServer(http.RedirectHandler(target.URL, http.StatusTemporaryRedirect))
-	t.Cleanup(redirect.Close)
-	cliMarker := filepath.Join(t.TempDir(), "cli-invoked")
-	setFakeOpenCodePath(t, fmt.Sprintf("#!/bin/sh\nprintf x > %q\nprintf '[]'\n", cliMarker), false)
-	inst := &Instance{
-		Tool:         "opencode",
-		ProjectPath:  projectPath,
-		OpenCodePort: redirect.Listener.Addr().(*net.TCPAddr).Port,
+	if got := stub.listingRequests.Load(); got != 0 {
+		t.Fatalf("directory listing requested %d times, want 0", got)
 	}
 
-	if got := inst.queryOpenCodeSession(); got != "" {
-		t.Fatalf("redirected query session ID = %q, want empty", got)
-	}
-	if got := redirectedRequests.Load(); got != 0 {
-		t.Fatalf("redirect target request count = %d, want 0", got)
-	}
-	if _, err := os.Stat(cliMarker); !os.IsNotExist(err) {
-		t.Fatalf("redirect invoked CLI; marker stat error = %v", err)
-	}
-}
+	events <- `{"id":"evt_20","type":"session.created","properties":{"sessionID":"ses_NEW","info":{"id":"ses_NEW","directory":"/work"}}}`
+	awaitRoot("ses_NEW")
+	inst.updateOpenCodeSession(true)
 
-func TestQueryOpenCodeSession_SnapshotsBindingWhileHTTPIsInFlight(t *testing.T) {
-	projectPath := t.TempDir()
-	requestStarted := make(chan struct{})
-	releaseResponse := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		close(requestStarted)
-		<-releaseResponse
-		fmt.Fprintf(w, `[
-			{"id":"ses_OLD","directory":%q,"time":{"created":1000,"updated":2000}},
-			{"id":"ses_NEW","directory":%q,"time":{"created":3000,"updated":4000}}
-		]`, projectPath, projectPath)
-	}))
-	t.Cleanup(server.Close)
-
-	inst := &Instance{
-		Tool:              "opencode",
-		ProjectPath:       projectPath,
-		OpenCodePort:      server.Listener.Addr().(*net.TCPAddr).Port,
-		OpenCodeSessionID: "ses_OLD",
+	if got := boundOpenCodeSession(inst); got != "ses_NEW" {
+		t.Fatalf("OpenCodeSessionID = %q after a new root session on the child's own stream, want ses_NEW", got)
 	}
-	result := make(chan string, 1)
-	go func() { result <- inst.queryOpenCodeSession() }()
-
-	select {
-	case <-requestStarted:
-	case <-time.After(3 * time.Second):
-		t.Fatal("HTTP query did not start")
+	if got := stub.listingRequests.Load(); got != 0 {
+		t.Fatalf("directory listing requested %d times, want 0", got)
 	}
-	inst.setOpenCodeSession("ses_NEW")
-	close(releaseResponse)
-
-	if got := <-result; got != "ses_OLD" {
-		t.Fatalf("query result = %q, want snapshotted binding ses_OLD", got)
-	}
+	close(events)
 }
 
 func TestQueryOpenCodeSessionsHTTP_RejectsOversizedResponse(t *testing.T) {
